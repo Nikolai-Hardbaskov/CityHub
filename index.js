@@ -1602,7 +1602,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     /* — вход — */
     function worldChoice() {
         return `<div class="sh-auth">
-          <div class="sh-crest"><i class="fa-solid fa-graduation-cap"></i><h2>CityHub</h2><p>Где вы учитесь?</p></div>
+          <div class="sh-crest"><i class="fa-solid fa-city"></i><h2>CityHub</h2><p>Приложение жителей города</p></div>
           <button class="sh-world" data-act="pickWorld" data-w="magic"><i class="fa-solid fa-wand-magic-sparkles"></i><div><b>Сверхъестественный университет</b><small>Люди, полулюди и магические виды. Способности, лор и магия.</small></div></button>
           <button class="sh-world" data-act="pickWorld" data-w="mundane"><i class="fa-solid fa-building-columns"></i><div><b>Обычный университет</b><small>Реальный мир без магии. Только люди: имя, пол и факультет.</small></div></button>
         </div>`;
@@ -3526,7 +3526,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
             const it = document.createElement('div');
             it.className = 'list-group-item flex-container flexGap5 interactable';
             it.tabIndex = 0;
-            it.innerHTML = '<div class="fa-solid fa-graduation-cap extensionsMenuExtensionButton"></div>CityHub';
+            it.innerHTML = '<div class="fa-solid fa-city extensionsMenuExtensionButton"></div>CityHub';
             it.addEventListener('click', () => toggle(true));
             menu.appendChild(it);
         }
