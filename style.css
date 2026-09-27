@@ -1,0 +1,465 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Onest:wght@400;500;600&display=swap');
+
+/* Палитра: чернильная ночь университета + свечной янтарь */
+#cityhub-phone, #cityhub-fab {
+    --sh-ink: #14111f;
+    --sh-card: #1f1a30;
+    --sh-line: #332b4a;
+    --sh-text: #ebe6f5;
+    --sh-mute: #a39cba;
+    --sh-amber: #f0b44c;
+    --sh-violet: #8f7cf0;
+    --sh-ok: #5cc99a;
+    --sh-bad: #ef5f76;
+    --sh-serif: 'Cormorant Garamond', 'Georgia', serif;
+    --sh-sans: 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+#cityhub-fab {
+    position: fixed; right: 18px; bottom: 110px; z-index: 2147483000;
+    width: 52px; height: 52px; border-radius: 16px; border: 1px solid var(--sh-line);
+    background: var(--sh-ink); color: var(--sh-amber); font-size: 22px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+}
+#cityhub-fab:focus-visible { outline: 2px solid var(--sh-amber); outline-offset: 2px; }
+#cityhub-fab .sh-fab-badge {
+    position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px;
+    border-radius: 10px; background: var(--sh-bad); color: #fff; font: 600 11px/20px var(--sh-sans);
+}
+
+#cityhub-phone {
+    position: fixed; right: 18px; bottom: 18px; z-index: 2147483001;
+    width: 390px; height: min(780px, calc(100vh - 36px));
+    display: none; flex-direction: column; overflow: hidden;
+    background: var(--sh-ink); color: var(--sh-text);
+    border: 7px solid var(--sh-frame); border-radius: 36px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+    font: 400 14px/1.45 var(--sh-sans); text-align: left;
+}
+#cityhub-phone.open { display: flex; }
+@media (max-width: 640px) {
+    #cityhub-phone { inset: 0; width: 100%; height: 100dvh; border: 0; border-radius: 0; padding-top: env(safe-area-inset-top, 0); }
+    #cityhub-phone .sh-status { padding: 8px 8px 6px 14px; }
+    #cityhub-phone .sh-status .sh-icon { font-size: 19px; padding: 10px; min-width: 42px; min-height: 42px; }
+}
+#cityhub-phone * { box-sizing: border-box; }
+#cityhub-phone h2, #cityhub-phone h3, #cityhub-phone h4 { margin: 0; color: var(--sh-text); }
+#cityhub-phone p { margin: 6px 0; }
+#cityhub-phone small { display: block; color: var(--sh-mute); font-size: 12px; }
+
+/* статус-бар */
+#cityhub-phone .sh-status {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--sh-line); flex-shrink: 0;
+}
+#cityhub-phone .sh-clock { font-weight: 600; font-variant-numeric: tabular-nums; }
+#cityhub-phone .sh-brand { flex: 1; text-align: center; font: 700 19px/1 var(--sh-serif); color: var(--sh-amber); letter-spacing: .02em; }
+#cityhub-phone .sh-sb-right { display: flex; align-items: center; gap: 4px; }
+#cityhub-phone .sh-pill { color: var(--sh-text); padding: 2px 7px; border-radius: 8px; background: var(--sh-card); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+#cityhub-phone button { font: inherit; color: inherit; cursor: pointer; }
+#cityhub-phone .sh-icon { position: relative; background: none; border: 0; padding: 6px; font-size: 15px; color: var(--sh-mute); }
+#cityhub-phone .sh-icon:hover { color: var(--sh-text); }
+#cityhub-phone .sh-dot {
+    position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; padding: 0 4px;
+    border-radius: 8px; background: var(--sh-bad); color: #fff; font: 600 10px/16px var(--sh-sans); text-align: center;
+}
+#cityhub-phone :focus-visible { outline: 2px solid var(--sh-amber); outline-offset: 2px; }
+
+/* экран */
+#cityhub-phone .sh-screen { flex: 1; overflow-y: auto; padding: 12px 12px 16px; overscroll-behavior: contain; }
+#cityhub-phone .sh-h { font: 700 22px/1.2 var(--sh-serif); margin: 4px 2px 12px; }
+#cityhub-phone .sh-h small { font: 400 12px var(--sh-sans); margin-top: 2px; }
+#cityhub-phone h4 { font: 600 13px var(--sh-sans); color: var(--sh-mute); margin: 16px 2px 8px; }
+#cityhub-phone .sh-card h4 { margin-top: 0; }
+#cityhub-phone .sh-muted { color: var(--sh-mute); font-size: 12px; }
+#cityhub-phone .sh-empty { padding: 28px 16px; text-align: center; color: var(--sh-mute); }
+
+#cityhub-phone .sh-head { display: flex; align-items: center; gap: 6px; margin: -4px 0 12px; }
+#cityhub-phone .sh-head h3 { font: 700 20px/1.15 var(--sh-serif); }
+
+#cityhub-phone .sh-card { background: var(--sh-card); border: 1px solid var(--sh-line); border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+#cityhub-phone .sh-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+#cityhub-phone .sh-card.sh-row { margin-top: 0; }
+#cityhub-phone .sh-row > input { flex: 1; }
+
+/* формы: перебиваем глобальные стили ST */
+#cityhub-phone input:not([type='checkbox']), #cityhub-phone textarea, #cityhub-phone select {
+    width: 100%; margin: 4px 0 0; padding: 9px 10px; border-radius: 10px;
+    background: var(--sh-ink); color: var(--sh-text); border: 1px solid var(--sh-line);
+    font: 400 14px/1.4 var(--sh-sans); resize: vertical; min-height: 0;
+}
+#cityhub-phone input:focus, #cityhub-phone textarea:focus, #cityhub-phone select:focus { border-color: var(--sh-violet); outline: none; }
+#cityhub-phone .sh-form label, #cityhub-phone .sh-auth label { display: block; margin-bottom: 10px; font-size: 12px; color: var(--sh-mute); }
+#cityhub-phone .sh-toggle { display: flex; align-items: center; gap: 10px; padding: 6px 0; color: var(--sh-text); font-size: 14px; }
+#cityhub-phone .sh-toggle input { accent-color: var(--sh-amber); width: 18px; height: 18px; }
+
+/* кнопки */
+#cityhub-phone .sh-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 10px 14px; border-radius: 11px; border: 1px solid var(--sh-amber);
+    background: var(--sh-amber); color: var(--sh-on); font-weight: 600;
+}
+#cityhub-phone .sh-btn:hover { filter: brightness(1.08); }
+#cityhub-phone .sh-btn:disabled { opacity: .45; cursor: not-allowed; }
+#cityhub-phone .sh-btn.ghost { background: transparent; color: var(--sh-amber); }
+#cityhub-phone .sh-btn.danger { background: var(--sh-bad); border-color: var(--sh-bad); color: #fff; }
+#cityhub-phone .sh-btn.sm { padding: 6px 11px; font-size: 13px; }
+#cityhub-phone .sh-btn.wide, #cityhub-phone .sh-auth .sh-btn, #cityhub-phone .sh-form > .sh-btn { width: 100%; margin: 4px 0 10px; }
+#cityhub-phone .sh-link { background: none; border: 0; padding: 6px 2px; color: var(--sh-mute); font-size: 12px; text-decoration: underline; }
+
+/* чипы и сегменты */
+#cityhub-phone .sh-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 8px; scrollbar-width: none; }
+#cityhub-phone .sh-chip { flex-shrink: 0; padding: 5px 12px; border-radius: 20px; border: 1px solid var(--sh-line); background: none; font-size: 13px; color: var(--sh-mute); }
+#cityhub-phone .sh-chip.on { border-color: var(--sh-violet); color: var(--sh-text); background: color-mix(in srgb, var(--sh-amber) 16%, transparent); border-color: var(--sh-amber); }
+#cityhub-phone .sh-seg { display: flex; background: var(--sh-card); border-radius: 12px; padding: 3px; margin-bottom: 10px; }
+#cityhub-phone .sh-seg button { flex: 1; border: 0; background: none; padding: 7px; border-radius: 9px; color: var(--sh-mute); }
+#cityhub-phone .sh-seg button.on { background: var(--sh-line); color: var(--sh-text); }
+
+/* аватары, бейджи */
+#cityhub-phone .sh-ava { flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #f3eefb; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+#cityhub-phone .sh-ava i { font-size: .95em; opacity: .92; }
+#cityhub-phone .sh-ava.big { width: 52px; height: 52px; font: 700 22px var(--sh-serif); }
+#cityhub-phone .sh-badge { display: inline-block; margin: 3px 4px 0 0; padding: 1px 8px; border-radius: 6px; font-size: 11px; background: color-mix(in srgb, var(--sh-violet) 18%, transparent); color: var(--sh-violet); }
+#cityhub-phone .sh-badge.ok { background: color-mix(in srgb, var(--sh-ok) 18%, transparent); color: var(--sh-ok); }
+#cityhub-phone .sh-badge.bad { background: color-mix(in srgb, var(--sh-bad) 18%, transparent); color: var(--sh-bad); }
+#cityhub-phone .sh-badge.mid { background: color-mix(in srgb, var(--sh-mute) 15%, transparent); color: var(--sh-mute); }
+#cityhub-phone .sh-badge.live { background: color-mix(in srgb, var(--sh-amber) 20%, transparent); color: var(--sh-amber); }
+#cityhub-phone .sh-verified { color: var(--sh-violet); font-size: 12px; }
+
+/* списки */
+#cityhub-phone .sh-li {
+    width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 4px;
+    background: none; border: 0; border-bottom: 1px solid var(--sh-line); text-align: left; position: relative;
+}
+#cityhub-phone .sh-li > div { flex: 1; min-width: 0; }
+#cityhub-phone .sh-li small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#cityhub-phone .sh-li.static { cursor: default; }
+#cityhub-phone .sh-li .sh-dot { position: static; }
+#cityhub-phone .sh-task > i { width: 18px; color: var(--sh-mute); }
+#cityhub-phone .sh-task.bad > i, #cityhub-phone .sh-task.bad small { color: var(--sh-bad); }
+#cityhub-phone .sh-task.warn > i, #cityhub-phone .sh-task.warn small { color: var(--sh-amber); }
+#cityhub-phone .sh-task.ok > i { color: var(--sh-ok); }
+
+/* лента */
+#cityhub-phone .sh-stories { display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 10px; scrollbar-width: none; }
+#cityhub-phone .sh-story { background: none; border: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 58px; flex-shrink: 0; }
+#cityhub-phone .sh-story .sh-ava { box-shadow: 0 0 0 2px var(--sh-ink), 0 0 0 4px var(--sh-amber); }
+#cityhub-phone .sh-story small { max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#cityhub-phone .sh-post-h { display: flex; gap: 10px; align-items: flex-start; }
+#cityhub-phone .sh-post-t { margin: 10px 0 6px; white-space: pre-wrap; }
+#cityhub-phone .sh-media { display: flex; gap: 10px; align-items: center; padding: 22px 14px; margin: 6px 0; border-radius: 10px; background: var(--sh-card2); color: var(--sh-mute); font-style: italic; font-size: 13px; }
+#cityhub-phone .sh-media i { font-size: 20px; color: var(--sh-violet); font-style: normal; }
+#cityhub-phone .sh-post-a { display: flex; gap: 14px; }
+#cityhub-phone .sh-post-a button { background: none; border: 0; padding: 4px 0; color: var(--sh-mute); }
+#cityhub-phone .sh-post-a button.on { color: var(--sh-bad); }
+#cityhub-phone .sh-compose textarea { margin: 0; }
+
+/* мессенджер */
+#cityhub-phone .sh-msgs { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; }
+#cityhub-phone .sh-msg { align-self: flex-start; max-width: 82%; padding: 8px 11px; border-radius: 14px 14px 14px 4px; background: var(--sh-card); white-space: pre-wrap; word-wrap: break-word; }
+#cityhub-phone .sh-msg.me { align-self: flex-end; border-radius: 14px 14px 4px 14px; background: var(--sh-me); }
+#cityhub-phone .sh-msg b { display: block; font-size: 12px; color: var(--sh-amber); }
+#cityhub-phone .sh-msg time { display: block; text-align: right; font-size: 10px; color: var(--sh-mute); margin-top: 2px; }
+#cityhub-phone .sh-msg.typing { font-style: italic; color: var(--sh-mute); }
+#cityhub-phone .sh-sys { align-self: center; font-size: 12px; color: var(--sh-mute); padding: 4px 10px; }
+#cityhub-phone .sh-composer { position: sticky; bottom: -16px; display: flex; gap: 8px; align-items: flex-end; padding: 8px 0 4px; background: var(--sh-ink); }
+#cityhub-phone .sh-composer textarea { margin: 0; flex: 1; max-height: 120px; }
+
+/* знакомства */
+#cityhub-phone .sh-compat { height: 6px; border-radius: 3px; background: var(--sh-line); overflow: hidden; margin: 8px 0 4px; }
+#cityhub-phone .sh-compat span { display: block; height: 100%; background: var(--sh-violet); }
+#cityhub-phone .sh-profile .sh-row .sh-btn { flex: 1; }
+
+/* кабинет: студенческий билет с печатью рейтинга — главный акцент */
+#cityhub-phone .sh-idcard {
+    display: flex; align-items: center; gap: 12px; padding: 14px; margin-bottom: 12px;
+    border-radius: 16px; border: 1px solid var(--sh-line);
+    background: linear-gradient(120deg, var(--sh-card2) 0%, var(--sh-card) 75%);
+}
+#cityhub-phone .sh-idcard > div:nth-child(2) { flex: 1; min-width: 0; }
+#cityhub-phone .sh-idcard > div > b { font: 700 19px/1.1 var(--sh-serif); }
+#cityhub-phone .sh-seal {
+    width: 74px; height: 74px; flex-shrink: 0; border-radius: 50%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border: 2px dashed var(--sh-ok); color: var(--sh-ok); transform: rotate(-8deg);
+}
+#cityhub-phone .sh-seal b { font: 700 21px/1 var(--sh-serif); }
+#cityhub-phone .sh-seal small { color: inherit; font-size: 10px; }
+#cityhub-phone .sh-seal.warn { border-color: var(--sh-amber); color: var(--sh-amber); }
+#cityhub-phone .sh-seal.bad { border-color: var(--sh-bad); color: var(--sh-bad); }
+
+#cityhub-phone .sh-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
+#cityhub-phone .sh-days button { padding: 7px 0; border-radius: 9px; border: 1px solid var(--sh-line); background: none; color: var(--sh-mute); }
+#cityhub-phone .sh-days button.today { color: var(--sh-amber); }
+#cityhub-phone .sh-days button.on { background: var(--sh-line); color: var(--sh-text); }
+#cityhub-phone .sh-class { display: flex; gap: 12px; }
+#cityhub-phone .sh-class.live { border-color: var(--sh-amber); }
+#cityhub-phone .sh-class > div:last-child { flex: 1; min-width: 0; }
+#cityhub-phone .sh-class-t { width: 46px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+#cityhub-phone .sh-class-t b { font-size: 15px; }
+
+#cityhub-phone .sh-note { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; margin-bottom: 8px; border-radius: 12px; background: var(--sh-card); border-left: 3px solid var(--sh-violet); font-size: 13px; }
+#cityhub-phone .sh-note span { flex: 1; }
+#cityhub-phone .sh-note small { flex-shrink: 0; }
+#cityhub-phone .sh-note.warn { border-left-color: var(--sh-amber); }
+#cityhub-phone .sh-note.bad { border-left-color: var(--sh-bad); }
+#cityhub-phone .sh-note.important { border-left-color: var(--sh-ok); }
+#cityhub-phone .sh-note.read { opacity: .7; }
+
+#cityhub-phone .sh-bar { height: 8px; border-radius: 4px; background: var(--sh-line); overflow: hidden; margin: 6px 0; }
+#cityhub-phone .sh-bar span { display: block; height: 100%; background: var(--sh-ok); }
+#cityhub-phone .sh-bar span.warn { background: var(--sh-amber); }
+#cityhub-phone .sh-bar span.bad { background: var(--sh-bad); }
+
+#cityhub-phone .sh-strike { border-left: 3px solid var(--sh-bad); }
+#cityhub-phone .sh-strike.fixed { border-left-color: var(--sh-ok); opacity: .75; }
+#cityhub-phone .sh-gpa { text-align: center; }
+#cityhub-phone .sh-gpa b, #cityhub-phone .sh-balance b { display: block; font: 700 42px/1.1 var(--sh-serif); color: var(--sh-amber); }
+#cityhub-phone .sh-balance { text-align: center; }
+#cityhub-phone .sh-grade { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; font: 700 24px var(--sh-serif); background: var(--sh-line); }
+#cityhub-phone .sh-grade.sm { width: 36px; height: 30px; font-size: 16px; }
+#cityhub-phone .sh-grade.g5 { color: var(--sh-ok); }
+#cityhub-phone .sh-grade.g4 { color: #b3d86b; }
+#cityhub-phone .sh-grade.g3 { color: var(--sh-amber); }
+#cityhub-phone .sh-grade.g2 { color: var(--sh-bad); }
+#cityhub-phone .sh-amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+#cityhub-phone .sh-amt.in { color: var(--sh-ok); }
+#cityhub-phone .sh-amt.out { color: var(--sh-text); }
+#cityhub-phone .sh-qa { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--sh-line); font-size: 13px; }
+#cityhub-phone .sh-item b { display: block; }
+
+#cityhub-phone .sh-expelled { text-align: center; padding: 22px 16px; border-color: var(--sh-bad); }
+#cityhub-phone .sh-expelled > i { font-size: 30px; color: var(--sh-bad); }
+#cityhub-phone .sh-expelled h3 { font: 700 24px var(--sh-serif); margin: 8px 0; }
+
+/* сервисы */
+#cityhub-phone .sh-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+#cityhub-phone .sh-tiles button { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 4px; border-radius: 14px; border: 1px solid var(--sh-line); background: var(--sh-card); font-size: 12px; }
+#cityhub-phone .sh-tiles i { font-size: 22px; color: var(--sh-amber); }
+
+/* вход */
+#cityhub-phone .sh-auth { padding: 6px 4px; }
+#cityhub-phone .sh-crest { text-align: center; margin: 10px 0 20px; }
+#cityhub-phone .sh-crest > i { font-size: 34px; color: var(--sh-amber); }
+#cityhub-phone .sh-crest h2 { font: 700 34px/1.1 var(--sh-serif); margin-top: 6px; }
+#cityhub-phone .sh-crest p { color: var(--sh-mute); font-size: 13px; }
+#cityhub-phone .sh-fac-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+#cityhub-phone .sh-fac { text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--sh-line); background: var(--sh-card); }
+#cityhub-phone .sh-fac.on { border-color: var(--sh-amber); background: color-mix(in srgb, var(--sh-amber) 12%, transparent); }
+#cityhub-phone .sh-fac b { display: block; }
+#cityhub-phone .sh-fac em { font-size: 11px; color: var(--sh-violet); }
+
+/* навигация */
+#cityhub-phone .sh-nav { display: flex; border-top: 1px solid var(--sh-line); flex-shrink: 0; padding-bottom: env(safe-area-inset-bottom, 0); }
+#cityhub-phone .sh-nav:empty { display: none; }
+#cityhub-phone .sh-nav button { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0 8px; border: 0; background: none; color: var(--sh-mute); font-size: 10px; }
+#cityhub-phone .sh-nav button i { font-size: 17px; }
+#cityhub-phone .sh-nav button.on { color: var(--sh-amber); }
+#cityhub-phone .sh-nav .sh-dot { top: 4px; right: calc(50% - 20px); }
+
+/* загрузка */
+#cityhub-phone .sh-overlay:empty { display: none; }
+#cityhub-phone .sh-busy {
+    position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center; padding: 10px 16px; border-radius: 20px;
+    background: var(--sh-card2); border: 1px solid var(--sh-line); box-shadow: 0 8px 20px rgba(0, 0, 0, .4); white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #cityhub-phone .fa-spin { animation: none; }
+}
+
+#cityhub-phone .sh-other { margin: -4px 0 10px; }
+#cityhub-phone .sh-other .sh-toggle { font-size: 13px; }
+#cityhub-phone select { appearance: auto; }
+
+#cityhub-fab.hidden { display: none !important; }
+#cityhub-phone .sh-status { position: relative; z-index: 2; background: var(--sh-ink); }
+#cityhub-phone [data-act="close"] { color: var(--sh-text); }
+
+/* соцсеть */
+#cityhub-phone .sh-me { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 10px; border-radius: 14px; border: 1px solid var(--sh-line); background: var(--sh-card); text-align: left; }
+#cityhub-phone .sh-me > div { flex: 1; }
+#cityhub-phone .sh-me > i { color: var(--sh-mute); }
+#cityhub-phone .sh-name { background: none; border: 0; padding: 0; font-weight: 600; color: var(--sh-text); }
+#cityhub-phone .sh-cmts { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 12px; }
+#cityhub-phone .sh-cmt { display: flex; gap: 8px; }
+#cityhub-phone .sh-cmt.reply { margin-left: 26px; }
+#cityhub-phone .sh-cmt .sh-ava { width: 30px; height: 30px; font-size: 13px; }
+#cityhub-phone .sh-cmt > div { flex: 1; min-width: 0; }
+#cityhub-phone .sh-cmt-b { background: var(--sh-card); border: 1px solid var(--sh-line); border-radius: 4px 14px 14px 14px; padding: 7px 10px; }
+#cityhub-phone .sh-cmt.mine .sh-cmt-b { background: var(--sh-me); }
+#cityhub-phone .sh-cmt-b p { margin: 3px 0 0; white-space: pre-wrap; word-wrap: break-word; }
+#cityhub-phone .sh-cmt-b .sh-badge { font-size: 10px; }
+#cityhub-phone .sh-at { color: var(--sh-violet); }
+#cityhub-phone .sh-cmt-a { display: flex; gap: 14px; align-items: center; padding: 3px 4px; font-size: 12px; color: var(--sh-mute); }
+#cityhub-phone .sh-cmt-a button { background: none; border: 0; padding: 2px 0; color: var(--sh-mute); font-size: 12px; }
+#cityhub-phone .sh-cmt-a button.on { color: var(--sh-bad); }
+#cityhub-phone .sh-composer { flex-direction: column; align-items: stretch; }
+#cityhub-phone .sh-composer .sh-row { margin-top: 0; flex-wrap: nowrap; align-items: flex-end; }
+#cityhub-phone .sh-composer .sh-row textarea { flex: 1; }
+#cityhub-phone .sh-replying { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--sh-violet); padding: 0 2px 4px; }
+#cityhub-phone .sh-replying button { background: none; border: 0; color: var(--sh-mute); padding: 4px 8px; }
+#cityhub-phone .sh-person { display: flex; gap: 12px; align-items: center; }
+#cityhub-phone .sh-person b { display: block; font: 700 19px/1.2 var(--sh-serif); }
+#cityhub-phone .sh-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; margin-bottom: 6px; }
+#cityhub-phone .sh-stats > div { background: var(--sh-card); border: 1px solid var(--sh-line); border-radius: 12px; padding: 8px 2px; }
+#cityhub-phone .sh-stats b { font-size: 16px; }
+
+#cityhub-phone .sh-storytag { display: inline-flex; gap: 6px; align-items: center; margin: 8px 6px 0 0; padding: 2px 9px; border-radius: 8px; border: 1px solid var(--sh-line); background: none; color: var(--sh-violet); font-size: 11px; }
+#cityhub-phone .sh-storytag.hot { color: var(--sh-amber); border-color: color-mix(in srgb, var(--sh-amber) 40%, transparent); }
+#cityhub-phone .sh-lvl { display: flex; justify-content: space-between; align-items: baseline; }
+#cityhub-phone .sh-lvl b { font: 700 18px var(--sh-serif); color: var(--sh-amber); }
+#cityhub-phone .sh-stats.two { grid-template-columns: 1fr 1fr; margin: 8px 0; }
+#cityhub-phone .sh-rel { display: flex; gap: 10px; align-items: center; margin: -4px 0 10px; }
+#cityhub-phone .sh-rel > div { flex: 1; }
+#cityhub-phone .sh-relbar { position: relative; height: 6px; border-radius: 3px; background: var(--sh-line); margin-top: 4px; overflow: hidden; }
+#cityhub-phone .sh-relbar::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--sh-mute); }
+#cityhub-phone .sh-relbar span { position: absolute; top: 0; bottom: 0; background: var(--sh-ok); }
+#cityhub-phone .sh-relbar span.neg { background: var(--sh-bad); }
+#cityhub-phone .sh-bad-t { color: var(--sh-bad); }
+
+#cityhub-phone .sh-stats.one { grid-template-columns: 1fr; margin: 8px 0; }
+#cityhub-phone .sh-quest { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--sh-line); }
+#cityhub-phone .sh-quest:last-child { border-bottom: 0; }
+#cityhub-phone .sh-quest > i { margin-top: 3px; color: var(--sh-violet); width: 16px; }
+#cityhub-phone .sh-quest.done > i { color: var(--sh-ok); }
+#cityhub-phone .sh-quest.done b { text-decoration: line-through; color: var(--sh-mute); }
+#cityhub-phone .sh-quest p { margin: 3px 0; font-size: 13px; }
+#cityhub-phone .sh-quest .sh-btn { margin-top: 6px; }
+
+#cityhub-phone .sh-pending { border-color: var(--sh-amber); }
+#cityhub-phone .sh-pending b i { color: var(--sh-amber); margin-right: 4px; }
+
+#cityhub-phone button.sh-pill { border: 0; color: var(--sh-amber); cursor: pointer; }
+#cityhub-phone .sh-star { width: 36px; text-align: center; font-size: 22px; }
+@media (max-width: 640px) {
+    #cityhub-phone .sh-brand { font-size: 16px; }
+    #cityhub-phone .sh-status { gap: 4px; }
+    #cityhub-phone .sh-pill { padding: 2px 5px; font-size: 10.5px; }
+}
+
+#cityhub-phone button.sh-clock { background: none; border: 0; padding: 0; color: var(--sh-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+#cityhub-phone .sh-bigclock { text-align: center; }
+#cityhub-phone .sh-bigclock b { display: block; font: 700 46px/1.1 var(--sh-serif); color: var(--sh-amber); }
+#cityhub-phone .sh-bigclock span { display: block; text-transform: capitalize; margin-bottom: 4px; }
+#cityhub-phone .sh-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+#cityhub-phone .sh-col { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+
+#cityhub-phone .sh-typing { color: var(--sh-amber) !important; font-style: italic; }
+
+#cityhub-phone .sh-official { border-color: rgba(239, 95, 118, .5); }
+
+#cityhub-phone .sh-note.sh-wide { width: 100%; text-align: left; color: var(--sh-text); cursor: pointer; border-top: 0; border-right: 0; border-bottom: 0; }
+
+/* Тема SillyTavern не должна перекрашивать UniHub */
+#cityhub-phone { font-family: var(--sh-sans) !important; color: var(--sh-text) !important; }
+#cityhub-phone *:not(i):not([class*="fa-"]) { font-family: inherit; opacity: 1; filter: none; text-shadow: none; letter-spacing: normal; }
+#cityhub-phone .sh-brand, #cityhub-phone .sh-h, #cityhub-phone .sh-head h3, #cityhub-phone .sh-crest h2, #cityhub-phone .sh-lvl b,
+#cityhub-phone .sh-gpa b, #cityhub-phone .sh-balance b, #cityhub-phone .sh-bigclock b, #cityhub-phone .sh-person b, #cityhub-phone .sh-idcard > div > b { font-family: var(--sh-serif) !important; }
+#cityhub-phone h2, #cityhub-phone h3, #cityhub-phone h4, #cityhub-phone b, #cityhub-phone p, #cityhub-phone span, #cityhub-phone label { color: inherit; }
+#cityhub-phone .sh-screen, #cityhub-phone .sh-card, #cityhub-phone .sh-li, #cityhub-phone .sh-note { color: var(--sh-text) !important; }
+#cityhub-phone h3, #cityhub-phone h2 { color: var(--sh-text) !important; }
+#cityhub-phone h4, #cityhub-phone small, #cityhub-phone .sh-muted, #cityhub-phone .sh-form label, #cityhub-phone .sh-auth label { color: var(--sh-mute) !important; }
+#cityhub-phone .sh-toggle, #cityhub-phone .sh-toggle span { color: var(--sh-text) !important; }
+#cityhub-phone input:not([type='checkbox']), #cityhub-phone textarea, #cityhub-phone select {
+    background: var(--sh-ink) !important; color: var(--sh-text) !important; border: 1px solid var(--sh-line) !important;
+    box-shadow: none !important; backdrop-filter: none !important; -webkit-text-fill-color: var(--sh-text) !important; }
+#cityhub-phone input::placeholder, #cityhub-phone textarea::placeholder { color: var(--sh-mute) !important; -webkit-text-fill-color: var(--sh-mute) !important; opacity: .8 !important; }
+#cityhub-phone select option, #cityhub-phone select optgroup { background: var(--sh-card); color: var(--sh-text); }
+#cityhub-phone .sh-btn { color: var(--sh-on) !important; }
+#cityhub-phone .sh-btn.ghost { color: var(--sh-amber) !important; background: transparent !important; }
+#cityhub-phone .sh-btn.danger { color: #fff !important; }
+
+/* ───── темы ───── */
+#cityhub-phone { --sh-on: #1b1307; --sh-me: #3a2f63; --sh-card2: #251d3c; --sh-frame: #07060b; }
+#cityhub-phone[data-theme="pearl"]   { --sh-ink:#1a1824; --sh-card:#24212f; --sh-card2:#2b2740; --sh-line:#36324a; --sh-text:#ece8f5; --sh-mute:#a29db5; --sh-amber:#b9a7ec; --sh-violet:#e3b7c8; --sh-on:#1a1824; --sh-me:#3a3355; --sh-ok:#8fd1b3; --sh-bad:#e8879b; }
+#cityhub-phone[data-theme="forest"]  { --sh-ink:#151b19; --sh-card:#1f2724; --sh-card2:#25302c; --sh-line:#2f3b37; --sh-text:#e8efe9; --sh-mute:#9aaba3; --sh-amber:#9fcbb0; --sh-violet:#d8c79a; --sh-on:#151b19; --sh-me:#2c3a34; --sh-ok:#9fcbb0; --sh-bad:#e0918f; }
+#cityhub-phone[data-theme="rose"]    { --sh-ink:#1d1619; --sh-card:#2a2024; --sh-card2:#33262b; --sh-line:#3e2f35; --sh-text:#f3e9ec; --sh-mute:#b39ea6; --sh-amber:#e0a9b8; --sh-violet:#c9b6e4; --sh-on:#1d1619; --sh-me:#432f38; --sh-ok:#9fd0b5; --sh-bad:#ee8a9c; }
+#cityhub-phone[data-theme="ocean"]   { --sh-ink:#121925; --sh-card:#1b2433; --sh-card2:#212c3e; --sh-line:#2b3850; --sh-text:#e6edf6; --sh-mute:#93a2b8; --sh-amber:#8fc3d6; --sh-violet:#b3a8e0; --sh-on:#121925; --sh-me:#243552; --sh-ok:#8fd1b3; --sh-bad:#ec8c98; }
+#cityhub-phone[data-theme="library"] { --sh-ink:#f6f2ec; --sh-card:#ffffff; --sh-card2:#fbf8f3; --sh-line:#e4ddd2; --sh-text:#2e2a33; --sh-mute:#7d7684; --sh-amber:#7a6aa8; --sh-violet:#5f8f88; --sh-on:#ffffff; --sh-me:#ebe5f6; --sh-ok:#3f8f6b; --sh-bad:#c4506a; --sh-frame:#d9d1c4; }
+#cityhub-phone[data-theme="classic"] { }
+
+/* посты сюжетных линий и живые карточки */
+#cityhub-phone .sh-post.story { border-left: 3px solid var(--sh-violet); border-radius: 0 14px 14px 0; }
+#cityhub-phone .sh-class.live, #cityhub-phone .sh-pending { box-shadow: 0 0 0 1px var(--sh-amber) inset; }
+@keyframes sh-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+#cityhub-phone .sh-status .sh-dot { animation: sh-pulse 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { #cityhub-phone .sh-status .sh-dot { animation: none; } }
+
+/* выбор темы */
+#cityhub-phone .sh-themes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#cityhub-phone .sh-theme { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 12px; border: 1px solid var(--sh-line); background: none; text-align: left; font-size: 12px; color: var(--sh-text); }
+#cityhub-phone .sh-theme.on { border-color: var(--sh-amber); box-shadow: 0 0 0 1px var(--sh-amber) inset; }
+#cityhub-phone .sh-theme .sw { display: flex; height: 26px; border-radius: 7px; overflow: hidden; border: 1px solid rgba(0,0,0,.2); }
+#cityhub-phone .sh-theme .sw span { flex: 1; }
+
+#cityhub-phone .sh-relsync { background: none; border: 0; padding: 0 4px; color: var(--sh-mute); font-size: 11px; cursor: pointer; }
+
+/* собственный переключатель — не зависит от темы SillyTavern */
+#cityhub-phone .sh-toggle { display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; align-items: center !important; gap: 12px !important; padding: 8px 0 !important; margin: 0 !important; cursor: pointer; }
+#cityhub-phone .sh-toggle span { flex: 1 1 auto; display: block; line-height: 1.35; }
+#cityhub-phone .sh-toggle input[type='checkbox'] {
+    -webkit-appearance: none !important; appearance: none !important;
+    position: relative !important; flex: 0 0 auto !important; display: inline-block !important;
+    width: 42px !important; height: 24px !important; min-width: 42px !important; margin: 0 !important; padding: 0 !important;
+    border-radius: 12px !important; border: 1px solid var(--sh-line) !important;
+    background: var(--sh-card2) none !important; box-shadow: none !important; outline: none;
+    transition: background .2s, border-color .2s; cursor: pointer; filter: none !important; opacity: 1 !important; transform: none !important;
+}
+#cityhub-phone .sh-toggle input[type='checkbox']::before {
+    content: '' !important; position: absolute !important; top: 2px !important; left: 2px !important;
+    width: 18px !important; height: 18px !important; border-radius: 50% !important;
+    background: var(--sh-mute) !important; transition: transform .2s, background .2s; box-shadow: none !important; border: 0 !important;
+    display: block !important; margin: 0 !important; transform: translateX(0);
+}
+#cityhub-phone .sh-toggle input[type='checkbox']::after { content: none !important; display: none !important; }
+#cityhub-phone .sh-toggle input[type='checkbox']:checked { background: var(--sh-amber) none !important; border-color: var(--sh-amber) !important; }
+#cityhub-phone .sh-toggle input[type='checkbox']:checked::before { background: var(--sh-on) !important; transform: translateX(18px) !important; }
+#cityhub-phone .sh-toggle input[type='checkbox']:focus-visible { outline: 2px solid var(--sh-amber); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { #cityhub-phone .sh-toggle input, #cityhub-phone .sh-toggle input::before { transition: none !important; } }
+
+/* выбор университета */
+#cityhub-phone .sh-world { width: 100%; display: flex; gap: 14px; align-items: center; text-align: left; padding: 16px; margin-bottom: 12px; border-radius: 16px; border: 1px solid var(--sh-line); background: var(--sh-card); color: var(--sh-text); }
+#cityhub-phone .sh-world > i { font-size: 26px; color: var(--sh-amber); width: 32px; text-align: center; }
+#cityhub-phone .sh-world b { display: block; font-size: 15px; margin-bottom: 2px; }
+#cityhub-phone .sh-world:hover { border-color: var(--sh-amber); }
+#cityhub-phone .sh-note .sh-link { margin-left: auto; padding: 0; }
+
+/* выпадающие списки: тема SillyTavern не перекрашивает */
+#cityhub-phone select {
+    -webkit-appearance: none !important; appearance: none !important; mix-blend-mode: normal !important;
+    background-color: var(--sh-ink) !important; color: var(--sh-text) !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23a29db5' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important; background-position: right 12px center !important; background-size: 12px 8px !important;
+    padding-right: 34px !important; border: 1px solid var(--sh-line) !important; border-radius: 10px !important; box-shadow: none !important;
+}
+
+#cityhub-phone .sh-badge.fac { background: color-mix(in srgb, var(--sh-amber) 14%, transparent); color: var(--sh-amber); }
+
+#cityhub-phone button.sh-note { font: inherit; }
+#cityhub-phone button.sh-note small i { margin-left: 4px; font-size: 10px; }
+#cityhub-phone button.sh-note:active { filter: brightness(1.15); }
+
+#cityhub-phone .sh-opreview { margin: 6px 0 10px; }
+#cityhub-phone .sh-oline { display: flex; justify-content: space-between; gap: 10px; padding: 3px 2px; font-size: 13px; }
+#cityhub-phone .sh-oline.total { border-top: 1px solid var(--sh-line); margin-top: 4px; padding-top: 6px; }
+#cityhub-phone .sh-oline.total b { color: var(--sh-amber); }
+
+#cityhub-phone .sh-find { margin: 6px 0 2px; }
+
+/* описания в списках (мероприятия, клубы, меню и т.п.) — полностью, без обрезки */
+#cityhub-phone .sh-li.static small { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+#cityhub-phone .sh-search { flex-wrap: nowrap !important; margin-top: 0; }
+#cityhub-phone .sh-search input { flex: 1; min-width: 0; margin: 0; }
+
+#cityhub-phone .sh-pbtn { display: block; width: 100%; background: none; border: 0; padding: 0; text-align: left; color: inherit; }
+#cityhub-phone .sh-pbtn .sh-post-h { align-items: center; }
+#cityhub-phone .sh-pbtn .sh-post-h > div { flex: 1; }
+#cityhub-phone .sh-pchev { color: var(--sh-mute); }
+#cityhub-phone .sh-prow { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--sh-line); }
+#cityhub-phone .sh-prow:last-child { border-bottom: 0; }
+#cityhub-phone .sh-prow > i { width: 18px; margin-top: 3px; color: var(--sh-amber); text-align: center; }
+#cityhub-phone .sh-prow p { margin: 2px 0 0; }
