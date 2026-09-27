@@ -186,42 +186,52 @@
     const ABILITIES = Object.values(ABILITY_GROUPS).flat().map((x) => ({ n: x.replace(/\+$/, ''), v: x.endsWith('+') }));
     const NO_ABIL = 'Отсутствуют';
     const MAX_YEAR = 5;
-    const MARKET_CATS = ['Учебники', 'Мебель', 'Электроника', 'Оборудование'];
+    const MARKET_CATS = ['Для дома', 'Электроника', 'Одежда и обувь', 'Спорт и отдых', 'Книги', 'Детям', 'Авто и инструменты'];
     const CLUBS = ['Клуб ночных астрономов', 'Хор сирен', 'Лига регби оборотней', 'Кружок зельеварения', 'Дебатный клуб «Меж видов»', 'Фотоклуб «Без отражения»'];
     const ROOMS = ['Лаборатория алхимии', 'Звукоизолированная комната (полнолуние)', 'Читальный зал без окон', 'Бассейн с морской водой', 'Огнеупорный тренировочный зал', 'Переговорная'];
     const MUNDANE_MENU = [
-        { title: 'Капучино', place: 'Кофейня у библиотеки', price: 90, tags: ['кофе'] },
-        { title: 'Круассан с миндалём', place: 'Кофейня у библиотеки', price: 80, tags: ['выпечка', 'вегетарианское'] },
-        { title: 'Бизнес-ланч', place: 'Столовая №1', price: 160, tags: ['обычное'] },
-        { title: 'Пицца «Маргарита»', place: 'Пиццерия «Кампус»', price: 240, tags: ['вегетарианское'] },
+        { title: 'Капучино', place: 'Кофейня «Зерно»', price: 90, tags: ['кофе'] },
+        { title: 'Круассан с миндалём', place: 'Кофейня «Зерно»', price: 80, tags: ['выпечка', 'вегетарианское'] },
+        { title: 'Бизнес-ланч', place: 'Столовая «Домашняя»', price: 160, tags: ['обычное'] },
+        { title: 'Пицца «Маргарита»', place: 'Пиццерия «На углу»', price: 240, tags: ['вегетарианское'] },
         { title: 'Поке с лососем', place: 'Поке-бар', price: 280, tags: ['рыба'] },
         { title: 'Боул с киноа и авокадо', place: 'Зелёная кухня', price: 210, tags: ['веганское'] },
-        { title: 'Шаурма', place: 'Шаурма у общаги', price: 150, tags: ['обычное'] },
+        { title: 'Шаурма', place: 'Шаурма у метро', price: 150, tags: ['обычное'] },
         { title: 'Сет роллов', place: 'Суши-бар', price: 350, tags: ['рыба'] },
         { title: 'Сэндвич без глютена', place: 'Зелёная кухня', price: 170, tags: ['без глютена'] },
-        { title: 'Плов', place: 'Столовая №2', price: 170, tags: ['халяль'] },
-        { title: 'Латте', place: 'Кофейня у библиотеки', price: 100, tags: ['кофе'] },
-        { title: 'Раф ванильный', place: 'Кофейня у библиотеки', price: 120, tags: ['кофе'] },
-        { title: 'Айс-латте с карамелью', place: 'Кофейня у библиотеки', price: 130, tags: ['кофе'] },
-        { title: 'Синнабон', place: 'Кофейня у библиотеки', price: 110, tags: ['выпечка'] },
-        { title: 'Сырники со сметаной', place: 'Столовая №1', price: 140, tags: ['завтраки', 'вегетарианское'] },
-        { title: 'Омлет с беконом', place: 'Столовая №1', price: 150, tags: ['завтраки'] },
-        { title: 'Пицца «Пепперони»', place: 'Пиццерия «Кампус»', price: 260, tags: ['обычное'] },
+        { title: 'Плов', place: 'Кафе «Восток»', price: 170, tags: ['халяль'] },
+        { title: 'Латте', place: 'Кофейня «Зерно»', price: 100, tags: ['кофе'] },
+        { title: 'Раф ванильный', place: 'Кофейня «Зерно»', price: 120, tags: ['кофе'] },
+        { title: 'Айс-латте с карамелью', place: 'Кофейня «Зерно»', price: 130, tags: ['кофе'] },
+        { title: 'Синнабон', place: 'Кофейня «Зерно»', price: 110, tags: ['выпечка'] },
+        { title: 'Сырники со сметаной', place: 'Столовая «Домашняя»', price: 140, tags: ['завтраки', 'вегетарианское'] },
+        { title: 'Омлет с беконом', place: 'Столовая «Домашняя»', price: 150, tags: ['завтраки'] },
+        { title: 'Пицца «Пепперони»', place: 'Пиццерия «На углу»', price: 260, tags: ['обычное'] },
         { title: 'Бургер с картошкой', place: 'Гриль «Квадрат»', price: 250, tags: ['обычное'] },
         { title: 'Цезарь с курицей', place: 'Зелёная кухня', price: 200, tags: ['обычное'] },
         { title: 'Фалафель-ролл', place: 'Зелёная кухня', price: 170, tags: ['веганское', 'халяль'] },
         { title: 'Рамен с курицей', place: 'Суши-бар', price: 260, tags: ['обычное'] },
-        { title: 'Чизкейк', place: 'Кофейня у библиотеки', price: 150, tags: ['выпечка', 'вегетарианское'] },
+        { title: 'Чизкейк', place: 'Кофейня «Зерно»', price: 150, tags: ['выпечка', 'вегетарианское'] },
     ];
     const MUNDANE_MARKET = [
-        { title: 'Учебник «Микроэкономика»', cat: 'Учебники', price: 450, rent: 70, seller: 'Ира, 3 курс', rating: 4.8, verified: true },
-        { title: 'Конспекты по матанализу', cat: 'Учебники', price: 150, rent: 0, seller: 'Дима, 2 курс', rating: 4.5, verified: false },
-        { title: 'Настольная лампа', cat: 'Мебель', price: 400, rent: 0, seller: 'Катя, 4 курс', rating: 4.6, verified: true },
-        { title: 'Офисное кресло', cat: 'Мебель', price: 1300, rent: 0, seller: 'Общежитие №2', rating: 4.2, verified: true },
-        { title: 'Ноутбук б/у', cat: 'Электроника', price: 6500, rent: 600, seller: 'Артём, 5 курс', rating: 4.3, verified: false },
-        { title: 'Наушники с шумоподавлением', cat: 'Электроника', price: 2400, rent: 250, seller: 'Лена, 1 курс', rating: 4.7, verified: true },
-        { title: 'Графический калькулятор', cat: 'Оборудование', price: 1500, rent: 200, seller: 'Кафедра математики', rating: 5, verified: true },
-        { title: 'Мини-холодильник для общаги', cat: 'Оборудование', price: 2200, rent: 300, seller: 'Саша, 3 курс', rating: 4.4, verified: false },
+        { title: 'Диван-кровать, б/у', cat: 'Для дома', price: 3500, rent: 0, seller: 'Ольга, частное лицо', rating: 4.6, verified: true },
+        { title: 'Кофемашина капсульная', cat: 'Для дома', price: 2200, rent: 0, seller: 'Магазин «Техно-Дом»', rating: 4.8, verified: true },
+        { title: 'Набор посуды на 6 персон', cat: 'Для дома', price: 900, rent: 0, seller: 'Нина Семёновна', rating: 4.9, verified: false },
+        { title: 'Смартфон, почти новый', cat: 'Электроника', price: 9000, rent: 0, seller: 'Денис, частное лицо', rating: 4.3, verified: false },
+        { title: 'Ноутбук для работы', cat: 'Электроника', price: 12000, rent: 900, seller: 'Прокат «Гаджет»', rating: 4.7, verified: true },
+        { title: 'Игровая приставка', cat: 'Электроника', price: 7500, rent: 600, seller: 'Максим, частное лицо', rating: 4.5, verified: true },
+        { title: 'Зимний пуховик', cat: 'Одежда и обувь', price: 2500, rent: 0, seller: 'Секонд «Вторая жизнь»', rating: 4.4, verified: true },
+        { title: 'Вечернее платье', cat: 'Одежда и обувь', price: 1800, rent: 400, seller: 'Прокат нарядов «Бал»', rating: 4.8, verified: true },
+        { title: 'Кроссовки для бега', cat: 'Одежда и обувь', price: 1400, rent: 0, seller: 'Аня, частное лицо', rating: 4.2, verified: false },
+        { title: 'Велосипед городской', cat: 'Спорт и отдых', price: 4800, rent: 350, seller: 'Прокат «Колесо»', rating: 4.6, verified: true },
+        { title: 'Палатка на 4 человека', cat: 'Спорт и отдых', price: 2600, rent: 300, seller: 'Турклуб «Вершина»', rating: 4.9, verified: true },
+        { title: 'Гантели разборные', cat: 'Спорт и отдых', price: 1100, rent: 0, seller: 'Игорь, частное лицо', rating: 4.1, verified: false },
+        { title: 'Собрание детективов, 10 книг', cat: 'Книги', price: 700, rent: 0, seller: 'Букинист «Страница»', rating: 4.7, verified: true },
+        { title: 'Кулинарная книга', cat: 'Книги', price: 350, rent: 0, seller: 'Лидия Павловна', rating: 5, verified: false },
+        { title: 'Детская коляска', cat: 'Детям', price: 3900, rent: 500, seller: 'Марина, мама двоих', rating: 4.8, verified: true },
+        { title: 'Конструктор, большой набор', cat: 'Детям', price: 1200, rent: 0, seller: 'Магазин «Игрушкин»', rating: 4.6, verified: true },
+        { title: 'Набор инструментов', cat: 'Авто и инструменты', price: 1600, rent: 200, seller: 'Сергей, автомеханик', rating: 4.5, verified: true },
+        { title: 'Автомобильное кресло', cat: 'Авто и инструменты', price: 2100, rent: 250, seller: 'Автомагазин «Путь»', rating: 4.4, verified: true },
     ];
     const MUNDANE_CLUBS = ['Студенческий театр', 'Дебатный клуб', 'Фотоклуб', 'Клуб настольных игр', 'Волейбольная секция', 'Студенческое радио'];
     const MUNDANE_ROOMS = ['Переговорная', 'Читальный зал', 'Компьютерный класс', 'Спортзал', 'Музыкальная студия', 'Актовый зал'];
@@ -327,8 +337,8 @@
             wallet: { balance: cfg().startBalance, history: [], lastStipend: now },
             feed: [], threads: [], social: { followers: 40 + Math.floor(Math.random() * 60), following: [], seed: 0 },
             dating: { mode: 'love', profiles: [], matches: [], fSpecies: '', fAbility: '', fGender: '' },
-            menu: DEFAULT_MENU.map((x) => ({ ...x, id: uid() })), orders: [],
-            market: DEFAULT_MARKET.map((x) => ({ ...x, id: uid() })), listings: [], inventory: [],
+            menu: MUNDANE_MENU.map((x) => ({ ...x, id: uid() })), orders: [],
+            market: MUNDANE_MARKET.map((x) => ({ ...x, id: uid() })), listings: [], inventory: [], world: 'mundane',
             events: [], clubs: [], bookings: [], tickets: [], dean: [],
             notes: [], pauses: [], pausedAt: 0,
         };
@@ -900,6 +910,14 @@
             let th = s.threads?.find((t) => t.kind === 'official' && t.name === 'Отдел полиции');
             if (!th && s.threads) { th = { id: uid(), name: 'Отдел полиции', species: '', bio: 'представитель полиции или суда, пишет официально', kind: 'official', msgs: [], t: Date.now(), unread: 0, rel: 0 }; s.threads.unshift(th); }
             if (th) { th.msgs.push({ me: false, text: `📜 ${k.consequence}`, t: Date.now() }); th.unread = (th.unread || 0) + 1; k.letter = th.id; }
+        }
+        if (!s.cityGoodsFixed) {
+            s.cityGoodsFixed = true;
+            const MAGIC = /кровь|сыр(ое|ая) (мясо|оленина)|эктоплазм|нектар|огнеупор|эмоци|лунн|водоросл|русалоч|преисподн|фея|полнолуни|спектр|для видов/i;
+            if (!s.menu || s.menu.some((m) => MAGIC.test(`${m.title} ${m.place} ${(m.tags || []).join(' ')}`))) s.menu = MUNDANE_MENU.map((x) => ({ ...x, id: uid() }));
+            if (!s.market || s.market.some((m) => !MARKET_CATS.includes(m.cat) || MAGIC.test(`${m.title} ${m.seller}`) || /курс|общаг|кафедр/i.test(`${m.title} ${m.seller}`))) s.market = MUNDANE_MARKET.map((x) => ({ ...x, id: uid() }));
+            if (s.groceries && s.groceries.some((g) => MAGIC.test(`${g.title} ${g.place} ${(g.tags || []).join(' ')}`))) s.groceries = null;
+            s.world = 'mundane';
         }
         if (!s.clock) s.clock = { mode: cfg().timeMode || 'game', t: Date.now(), source: 'старт' };
         if (!s.jealousy) s.jealousy = [];
@@ -1504,7 +1522,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const arriving = s.orders.filter((o) => (o.kind === 'food' || o.kind === 'grocery' || o.kind === 'service') && o.stage !== 'delivered' && (o.dueReply !== undefined ? (s.replyCount || 0) + 1 >= o.dueReply : Date.now() >= o.eta));
         if (arriving.length) {
             for (const o of arriving) o.injected = true;
-            L.push(`ДОСТАВКА — ОБЯЗАТЕЛЬНО В ЭТОМ ОТВЕТЕ: ${arriving.map((o) => o.kind === 'service' ? `к ${p.name} приезжает/приходит вызванный через CityHub исполнитель — ${o.title} (${o.details})` : `курьер CityHub приносит ${p.name} заказ: ${o.kind === 'grocery' ? 'пакет с продуктами — ' : ''}${o.title}${o.place ? ` (из: ${o.place})` : ''}`).join('; ')}. Доставка приходит туда, где ${p.name} находится прямо сейчас по сцене (комната, аудитория, двор, кафе и т.д.): курьер${mundane(s) ? '' : ' или доставщик в духе этого мира'} появляется, называет заказ и передаёт его. Впиши это естественно в текущую сцену, не обрывая её.`);
+            L.push(`ДОСТАВКА — ОБЯЗАТЕЛЬНО В ЭТОМ ОТВЕТЕ: ${arriving.map((o) => o.kind === 'service' ? (/такси/i.test(o.title) ? `к ${p.name} подъезжает вызванное через CityHub такси, чтобы отвезти: ${o.details}` : `к ${p.name} приезжает/приходит вызванный через CityHub исполнитель — ${o.title} (${o.details})`) : `курьер CityHub приносит ${p.name} заказ: ${o.kind === 'grocery' ? 'пакет с продуктами — ' : ''}${o.title}${o.place ? ` (из: ${o.place})` : ''}`).join('; ')}. Доставка приходит туда, где ${p.name} находится прямо сейчас по сцене (комната, аудитория, двор, кафе и т.д.): курьер${mundane(s) ? '' : ' или доставщик в духе этого мира'} появляется, называет заказ и передаёт его. Впиши это естественно в текущую сцену, не обрывая её.`);
         }
         const so = soc(s), nowT = NOW();
         L.push(`Популярность ${p.name} в CityHub (публично видно): уровень ${levelOf(so)}, ${kfmt(so.followers)} подписчиков.${cancelled(s) ? ` Сейчас ${p.name} «отменяют» в сети — многие жители настроены враждебно и обсуждают это.` : ''}`);
@@ -2001,7 +2019,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     }
     // arrive — приходит/приезжает в сцену; contact — пишет в личку
     const SERVICES = {
-        taxi: ['Такси', 'arrive', 150, 'Откуда и куда едем'], movers: ['Перевозка вещей', 'arrive', 900, 'Что перевезти и куда'], cleaning: ['Уборка / клининг', 'arrive', 600, 'Квартира, сколько комнат'],
+        taxi: ['Такси', 'arrive', 150, 'Куда едем'], movers: ['Перевозка вещей', 'arrive', 900, 'Что перевезти и куда отвезти'], cleaning: ['Уборка / клининг', 'arrive', 600, 'Квартира, сколько комнат'],
         plumber: ['Сантехник', 'arrive', 500, 'Что случилось'], electric: ['Электрик', 'arrive', 500, 'Что сломалось'], handyman: ['Мастер на час', 'arrive', 400, 'Что починить или собрать'],
         tutor: ['Репетитор', 'contact', 0, 'Предмет и цель'], search: ['Поиск человека', 'contact', 0, 'Кого ищем, приметы'], lawyer: ['Юрист', 'contact', 0, 'Суть вопроса'],
         psych: ['Психолог', 'contact', 0, 'С чем нужна помощь'], nanny: ['Няня', 'contact', 0, 'Возраст ребёнка, когда'], dogs: ['Выгул собак', 'contact', 0, 'Порода, время'],
@@ -2023,7 +2041,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         return `<div class="sh-card sh-form"><h4>Повседневная помощь</h4>
           <label>Что нужно<select id="sh-svc" data-change="svcType">${Object.entries(SERVICES).map(([key, v]) => `<option value="${key}" ${key === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></label>
           <label>${esc(sv[3])}<textarea id="sh-svc-text" rows="2"></textarea></label>
-          ${sv[1] === 'arrive' ? `<div class="sh-oline total"><span>Стоимость</span><b>${money(sv[2])}</b></div><small>Исполнитель приедет туда, где вы находитесь в истории.</small>` : '<small>Исполнитель напишет вам в личку с ценой и условиями.</small>'}
+          ${sv[1] === 'arrive' ? `<div class="sh-oline total"><span>Стоимость</span><b>${money(sv[2])}</b></div><small>${k === 'taxi' ? 'Такси подъедет туда, где вы находитесь в истории.' : 'Исполнитель приедет туда, где вы находитесь в истории.'}</small>` : '<small>Исполнитель напишет вам в личку с ценой и условиями.</small>'}
           <button class="sh-btn" data-act="orderSvc">${sv[1] === 'arrive' ? 'Вызвать' : 'Найти исполнителя'}</button></div>`;
     }
 
@@ -2197,7 +2215,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function walletView(s) {
         return `${head('Кошелёк')}
-        <div class="sh-card sh-balance"><small>Баланс</small><b>${money(s.wallet.balance)}</b><small class="sh-muted">Стипендия ${money(cfg().stipend)} раз в неделю при среднем балле от ${cfg().stipendMinGpa}.</small></div>
+        <div class="sh-card sh-balance"><small>Баланс</small><b>${money(s.wallet.balance)}</b><small class="sh-muted">${incomeName(s.profile)}: ${money(Number(cfg().stipend) || incomeOf(s.profile))} раз в неделю${/зарплат/i.test(incomeName(s.profile)) ? ` — ${s.profile.profession}` : ''}.</small></div>
         <div class="sh-card sh-form"><h4>Перевод</h4><label>Получатель<input id="sh-w-to" list="sh-w-list"></label><datalist id="sh-w-list">${s.threads.map((t) => `<option value="${esc(t.name)}">`).join('')}</datalist>
         <label>Сумма, ₡<input id="sh-w-sum" type="number" min="1"></label><label>Комментарий<input id="sh-w-note"></label><button class="sh-btn" data-act="transfer">Перевести</button></div>
         <h4>История</h4>
@@ -3241,11 +3259,11 @@ ${story ? `Последние события истории:\n${story}\nЕсли
             if (!q) return toast('warning', 'Напишите, что ищете.');
             return withBusy('Ищу у жителей…', async () => {
                 const r = await aiJSON(`${world(s)}\n\nЖитель ищет на маркетплейсе города: «${q}». Сгенерируй 3–5 объявлений от разных жителей (или магазинчиков города), которые продают или сдают именно это или близкие варианты — разное состояние, разные цены (новое дороже, б/у дешевле).${mundane(s) ? ' Только реальные вещи обычного мира, без магии.' : ' Вещи в духе этого сверхъестественного мира допустимы.'} Если такое в этом мире купить невозможно — верни пустой массив.
-Категория — одна из: ${MARKET_CATS.join(', ')}. Цены в ₡, для ориентира: учебник 300–600, мебель 400–2000, ноутбук 5000–15000.
+Категория — одна из: ${MARKET_CATS.join(', ')}. Цены в ₡, для ориентира: одежда 300–3000, мебель 800–6000, электроника 1000–15000, книги 100–800.
 Формат: [{"title":"","cat":"","price":500,"rent":0,"seller":"имя, курс","rating":4.5,"verified":true}] — rent: цена аренды в неделю или 0.`);
                 const list = (Array.isArray(r) ? r : []).filter((m) => m && m.title && +m.price > 0);
                 if (!list.length) return toast('info', `Никто на городе не продаёт «${q}». Попробуйте сформулировать иначе.`);
-                const add = list.map((m) => ({ id: uid(), title: cleanMsg(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Оборудование', price: Math.round(+m.price), rent: Math.max(0, Math.round(+m.rent || 0)), seller: cleanMsg(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false, found: true }));
+                const add = list.map((m) => ({ id: uid(), title: cleanMsg(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Для дома', price: Math.round(+m.price), rent: Math.max(0, Math.round(+m.rent || 0)), seller: cleanMsg(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false, found: true }));
                 s.market = [...add, ...s.market].slice(0, 60);
                 ui.mq = q; ui.mcat = 'all';
                 toast('success', `Найдено предложений: ${add.length}`);
@@ -3282,7 +3300,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
             const r = await aiJSON(`${world(s)}\n\n${mundane(s) ? 'Сгенерируй 16 объявлений городской барахолки: мебель, электроника, одежда, книги, спорт, товары для дома и детей и т.п. Никакой магии, реалистичные цены в ₡' : 'Сгенерируй 16 объявлений маркетплейса жителей: учебники, мебель, электроника и специализированное оборудование для разных видов'}.\nФормат: [{"title":"","cat":"Учебники|Мебель|Электроника|Оборудование","price":500,"rent":0,"seller":"имя","rating":4.5,"verified":true}] — rent: цена аренды в неделю или 0.`);
             const list = Array.isArray(r) ? r.filter((m) => m && m.title && +m.price > 0) : [];
             if (!list.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
-            s.market = [...s.market.filter((m) => m.found), ...list.map((m) => ({ id: uid(), title: String(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Оборудование', price: Math.round(+m.price), rent: Math.max(0, Math.round(+m.rent || 0)), seller: String(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false }))].slice(0, 60);
+            s.market = [...s.market.filter((m) => m.found), ...list.map((m) => ({ id: uid(), title: String(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Для дома', price: Math.round(+m.price), rent: Math.max(0, Math.round(+m.rent || 0)), seller: String(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false }))].slice(0, 60);
             save(s);
         }),
 
