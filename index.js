@@ -1278,6 +1278,15 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const s = md && md[MODULE];
         return s && s.clock && s.clock.mode === 'game' ? s.clock.t : Date.now();
     }
+    /** Проставляет постам, комментариям, сообщениям и уведомлениям время истории (в режиме игрового времени). */
+    function stampGame(s) {
+        if (!s) return;
+        const now = Date.now(), off = gameMode(s) ? s.clock.t - now : 0;
+        const st = (x) => { if (x && x.t && x.gt === undefined && x.t <= now + 1000) x.gt = x.t + off; };
+        for (const p of s.feed || []) { st(p); for (const c of p.comments || []) st(c); }
+        for (const t of s.threads || []) for (const m of t.msgs || []) st(m);
+        for (const n of s.notes || []) st(n);
+    }
     const fmtFull = (ts) => new Date(ts).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
     /** Двигает часы истории. back=true разрешает перевод назад (только вручную). */
     function setClock(s, ts, source, back = false) {
@@ -1504,7 +1513,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             const since = Date.now() - DAY;
             const ct = s.threads.find((t) => t.kind === 'char');
             const lines = ct ? ct.msgs.filter((m) => !m.sys && m.t > since).slice(-8) : [];
-            if (lines.length) L.push(`Недавняя переписка в CityHub между ${p.name} и ${ct.name} (обоим она известна, на неё можно ссылаться в истории):\n${lines.map((m) => `${m.me ? p.name : ct.name} (${fmtT(m.t)}): ${m.text}`).join('\n')}`);
+            if (lines.length) L.push(`Недавняя переписка в CityHub между ${p.name} и ${ct.name} (обоим она известна, на неё можно ссылаться в истории):\n${lines.map((m) => `${m.me ? p.name : ct.name} (${fmtT(m.gt ?? m.t)}): ${m.text}`).join('\n')}`);
         }
         // отношения: {{char}} — всегда; остальные — пометки только для рассказчика
         const ctr = s.threads.find((t) => t.kind === 'char');
@@ -1722,7 +1731,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const n = shownComments(p).length;
         return `<article class="sh-card sh-post ${p.story ? 'story' : ''}">
           <div class="sh-post-h">${ava(p.author, false, p.species)}<div>${p.mine ? `<b>${esc(p.author)}</b>` : nameBtn(p.author, '')}${(p.verified !== false && !p.mine) || (p.mine && levelOf(soc(s)) >= 5) ? ' <i class="fa-solid fa-circle-check sh-verified" title="Верифицирован"></i>' : ''}
-          <small>${p.species ? badge(p.species) : ''} ${esc(CHANNELS[p.channel] || '')}, ${fmtD(p.t)}</small></div></div>
+          <small>${p.species ? badge(p.species) : ''} ${esc(CHANNELS[p.channel] || '')}, ${fmtD(p.gt ?? p.t)}</small></div></div>
           ${p.story ? `<button class="sh-storytag" data-act="channel" data-ch="story:${esc(p.story)}"><i class="fa-solid fa-book-open"></i> ${esc(p.story)}</button>` : ''}${p.viral ? '<span class="sh-storytag hot"><i class="fa-solid fa-fire"></i> в тренде</span>' : ''}
           <div class="sh-post-t">${esc(p.text)}</div>
           ${p.media ? `<div class="sh-media"><i class="fa-solid ${KIND_ICON[p.kind] || 'fa-image'}"></i><span>${esc(p.media)}</span></div>` : ''}
@@ -1774,7 +1783,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         c = { ...c, text: stripMention(c.text, c.replyTo) };
         return `<div class="sh-cmt ${c.replyTo ? 'reply' : ''} ${c.mine ? 'mine' : ''}">${ava(c.author, false, c.mine ? S()?.profile.species : c.species)}
           <div><div class="sh-cmt-b">${c.mine ? `<b>${esc(c.author)}</b>` : nameBtn(c.author, c.species)}<p>${to}${esc(c.text)}</p></div>
-          <div class="sh-cmt-a"><span>${fmtT(c.t)}</span>
+          <div class="sh-cmt-a"><span>${fmtT(c.gt ?? c.t)}</span>
             <button data-act="cLike" data-post="${p.id}" data-id="${c.id}" class="${c.liked ? 'on' : ''}"><i class="fa-${c.liked ? 'solid' : 'regular'} fa-heart"></i> ${c.likes || 0}</button>
             ${c.mine ? '' : `<button data-act="replyTo" data-name="${esc(c.author)}">Ответить</button>`}</div></div></div>`;
     }
@@ -1862,7 +1871,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
           <div class="sh-row">${th.pendingMeet.problem || th.pendingMeet.conflict ? '' : `<button class="sh-btn sm" data-act="acceptPending" data-id="${th.id}">Добавить встречу</button>`}<button class="sh-btn sm ghost" data-act="go" data-view="meet" data-param="${th.id}">Изменить</button><button class="sh-btn sm ghost" data-act="dropPending" data-id="${th.id}">Нет</button></div></div>` : ''}
         <div class="sh-msgs">${th.msgs.map((m) => m.sys
         ? `<div class="sh-sys">${esc(m.text)}</div>`
-        : `<div class="sh-msg ${m.me ? 'me' : ''}">${m.from ? `<b>${esc(m.from)}</b>` : ''}${esc(m.text)}<time>${fmtT(m.t)}</time></div>`).join('')}
+        : `<div class="sh-msg ${m.me ? 'me' : ''}">${m.from ? `<b>${esc(m.from)}</b>` : ''}${esc(m.text)}<time>${fmtT(m.gt ?? m.t)}</time></div>`).join('')}
         ${th.typing ? `<div class="sh-msg typing">${esc(th.name)} печатает…</div>` : ''}</div>
         <div class="sh-composer"><div class="sh-row"><textarea id="sh-msg" rows="1" placeholder="Сообщение"></textarea><button class="sh-btn sm" data-act="send" data-id="${th.id}" aria-label="Отправить"><i class="fa-solid fa-paper-plane"></i></button></div></div>`;
     }
@@ -2377,8 +2386,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function notesView(s) {
         const html = `${head('Уведомления')}${s.notes.length ? s.notes.map((n) => n.go
-        ? `<button class="sh-note sh-wide ${n.type} ${n.read ? 'read' : ''}" data-act="openNote" data-id="${n.id}"><span>${esc(n.text)}</span><small>${fmtD(n.t)} <i class="fa-solid fa-chevron-right"></i></small></button>`
-        : `<div class="sh-note ${n.type} ${n.read ? 'read' : ''}"><span>${esc(n.text)}</span><small>${fmtD(n.t)}</small></div>`).join('') : empty('Уведомлений нет.')}`;
+        ? `<button class="sh-note sh-wide ${n.type} ${n.read ? 'read' : ''}" data-act="openNote" data-id="${n.id}"><span>${esc(n.text)}</span><small>${fmtD(n.gt ?? n.t)} <i class="fa-solid fa-chevron-right"></i></small></button>`
+        : `<div class="sh-note ${n.type} ${n.read ? 'read' : ''}"><span>${esc(n.text)}</span><small>${fmtD(n.gt ?? n.t)}</small></div>`).join('') : empty('Уведомлений нет.')}`;
         let changed = false;
         for (const n of s.notes) if (!n.read) { n.read = true; changed = true; }
         if (changed) setTimeout(() => { save(s); render(); }, 0);
@@ -2416,6 +2425,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         logErr('Стили (диагностика темы)', `select: ${pick(sel)} | textarea: ${pick(ta)} | toggle: ${pick(cb)} | toggle::after: ${pick(cb, '::after')} | toggle::before: ${pick(cb, '::before')} | label::before: ${pick(cb?.parentElement, '::before')}`);
     }
     function render() {
+        try { stampGame(S()); } catch (e) { logErr('Время', e); }
         updateFab();
         const ph = byId('cityhub-phone');
         if (!ph || !ui.open) return;
