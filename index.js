@@ -1860,20 +1860,19 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         th.unread = 0;
         if (needsRelSync(s, th)) setTimeout(() => syncRel(s, th).catch((e) => logErr('Отношения', e)), 0);
         const rl = th.relSyncing ? 'определяю отношения…' : relLabel(th), rv = Math.round(th.rel || 0);
-        return `${head(th.name, `${th.species ? esc(th.species) + ', ' : ''}<i class="fa-solid fa-lock"></i> зашифровано`)}
+        return `<div class="sh-ttop">${head(th.name, `${th.species ? esc(th.species) + ', ' : ''}<i class="fa-solid fa-lock"></i> зашифровано`)}
         ${th.kind === 'group' || th.kind === 'official' ? '' : `<div class="sh-rel"><div><small>${esc(rl)}${th.beef ? ' · бифф' : ''}${th.kind === 'char' && s.profile.relWithChar && rl !== 'пара' ? ' · вы пара' : ''}${relevantForSync(s, th) && !th.relSyncing ? ` <button class="sh-relsync" data-act="syncRel" data-id="${th.id}" title="${esc(th.relNote || 'Обновить по истории')}" aria-label="Обновить отношения по истории"><i class="fa-solid fa-rotate"></i></button>` : ''}</small><div class="sh-relbar"><span class="${rv < 0 ? 'neg' : ''}" style="width:${Math.abs(rv) / 2}%;${rv < 0 ? 'right:50%' : 'left:50%'}"></span></div></div>
-          <button class="sh-btn sm ghost" data-act="go" data-view="meet" data-param="${th.id}"><i class="fa-solid fa-calendar-plus"></i> Встреча</button></div>`}
-        ${th.pendingMeet ? `<div class="sh-card sh-pending"><b><i class="fa-solid fa-handshake"></i> Похоже, вы договорились о встрече</b>
-          <small>${esc(KINDS[th.pendingMeet.kind])}, ${fmtWhen(th.pendingMeet.at)}, ${esc(PLACES[th.pendingMeet.place])}${th.pendingMeet.note ? ` (${esc(th.pendingMeet.note)})` : ''}</small>
-          ${th.pendingMeet.conflict ? `<small class="sh-bad-t"><i class="fa-solid fa-triangle-exclamation"></i> В это время у вас пара «${esc(th.pendingMeet.conflict.subject)}» (${fmtT(th.pendingMeet.conflict.start)}–${fmtT(th.pendingMeet.conflict.end)}).</small>
-          <div class="sh-row"><button class="sh-btn sm" data-act="mentionClass" data-id="${th.id}"><i class="fa-regular fa-comment"></i> Написать про пару</button><button class="sh-btn sm ghost" data-act="skipPending" data-id="${th.id}">Прогулять</button></div>` : ''}
-          ${th.pendingMeet.problem ? `<small class="sh-bad-t">${esc(th.pendingMeet.problem)}</small>` : ''}
-          <div class="sh-row">${th.pendingMeet.problem || th.pendingMeet.conflict ? '' : `<button class="sh-btn sm" data-act="acceptPending" data-id="${th.id}">Добавить встречу</button>`}<button class="sh-btn sm ghost" data-act="go" data-view="meet" data-param="${th.id}">Изменить</button><button class="sh-btn sm ghost" data-act="dropPending" data-id="${th.id}">Нет</button></div></div>` : ''}
+          <button class="sh-btn sm ghost" data-act="go" data-view="meet" data-param="${th.id}"><i class="fa-solid fa-calendar-plus"></i> Встреча</button></div>`}</div>
         <div class="sh-msgs">${th.msgs.map((m) => m.sys
         ? `<div class="sh-sys">${esc(m.text)}</div>`
         : `<div class="sh-msg ${m.me ? 'me' : ''}">${m.from ? `<b>${esc(m.from)}</b>` : ''}${esc(m.text)}<time>${fmtT(m.gt ?? m.t)}</time></div>`).join('')}
         ${th.typing ? `<div class="sh-msg typing">${esc(th.name)} печатает…</div>` : ''}</div>
-        <div class="sh-composer"><div class="sh-row"><textarea id="sh-msg" rows="1" placeholder="Сообщение"></textarea><button class="sh-btn sm" data-act="send" data-id="${th.id}" aria-label="Отправить"><i class="fa-solid fa-paper-plane"></i></button></div></div>`;
+        <div class="sh-composer">${th.pendingMeet ? `<div class="sh-card sh-pending"><b><i class="fa-solid fa-handshake"></i> Похоже, вы договорились о встрече</b>
+          <small>${esc(KINDS[th.pendingMeet.kind])}, ${fmtWhen(th.pendingMeet.at)}, ${esc(PLACES[th.pendingMeet.place])}${th.pendingMeet.note ? ` (${esc(th.pendingMeet.note)})` : ''}</small>
+          ${th.pendingMeet.conflict ? `<small class="sh-bad-t"><i class="fa-solid fa-triangle-exclamation"></i> В это время у вас пара «${esc(th.pendingMeet.conflict.subject)}» (${fmtT(th.pendingMeet.conflict.start)}–${fmtT(th.pendingMeet.conflict.end)}).</small>
+          <div class="sh-row"><button class="sh-btn sm" data-act="mentionClass" data-id="${th.id}"><i class="fa-regular fa-comment"></i> Написать про пару</button><button class="sh-btn sm ghost" data-act="skipPending" data-id="${th.id}">Прогулять</button></div>` : ''}
+          ${th.pendingMeet.problem ? `<small class="sh-bad-t">${esc(th.pendingMeet.problem)}</small>` : ''}
+          <div class="sh-row">${th.pendingMeet.problem || th.pendingMeet.conflict ? '' : `<button class="sh-btn sm" data-act="acceptPending" data-id="${th.id}">Добавить встречу</button>`}<button class="sh-btn sm ghost" data-act="go" data-view="meet" data-param="${th.id}">Изменить</button><button class="sh-btn sm ghost" data-act="dropPending" data-id="${th.id}">Нет</button></div></div>` : ''}<div class="sh-row"><textarea id="sh-msg" rows="1" placeholder="Сообщение"></textarea><button class="sh-btn sm" data-act="send" data-id="${th.id}" aria-label="Отправить"><i class="fa-solid fa-paper-plane"></i></button></div></div>`;
     }
 
     /* — знакомства — */

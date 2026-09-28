@@ -463,3 +463,11 @@
 #cityhub-phone .sh-prow:last-child { border-bottom: 0; }
 #cityhub-phone .sh-prow > i { width: 18px; margin-top: 3px; color: var(--sh-amber); text-align: center; }
 #cityhub-phone .sh-prow p { margin: 2px 0 0; }
+
+/* диалог: шапка закреплена сверху, договорённость — у поля ввода */
+#cityhub-phone .sh-ttop { position: sticky; top: -12px; z-index: 5; margin: -12px -12px 8px; padding: 12px 12px 4px; background: var(--sh-ink); border-bottom: 1px solid var(--sh-line); }
+#cityhub-phone .sh-ttop .sh-head { margin-bottom: 6px; }
+#cityhub-phone .sh-ttop .sh-rel { margin: 0 0 6px; }
+#cityhub-phone .sh-composer { z-index: 5; }
+#cityhub-phone .sh-composer .sh-pending { margin: 0 0 8px; padding: 8px 10px; }
+#cityhub-phone .sh-composer .sh-pending .sh-row { margin-top: 6px; }
