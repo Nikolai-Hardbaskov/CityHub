@@ -472,10 +472,13 @@
         return '';
     }
     /** Убирает размышления модели и служебные блоки других расширений (Horae и т.п.). */
+    const STRIP_TAGS = 'horae\\w*|status\\w*|state\\w*|stats|info|details|summary|meta|tracker\\w*|scene\\w*|time|location|memory|event\\w*|plot\\w*|update\\w*|note\\w*';
     const stripThink = (t) => String(t || '')
         .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
-        .replace(/<(horae|status|state|stats|info|details|summary|meta|tracker|scene|time|location|memory)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi, '')
-        .replace(/<\/?(horae|status|state|stats|info|details|summary|meta|tracker|scene)\b[^>]*>/gi, '');
+        .replace(new RegExp(`<(${STRIP_TAGS})\\b[^>]*>[\\s\\S]*?(<\\/\\1\\s*>|$)`, 'gi'), '')
+        .replace(/<([a-z][\w-]{2,})\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+        .replace(/<\/?[a-z][\w-]*\b[^>]*>/gi, '')
+        .replace(/\n{3,}/g, '\n\n');
     /** Для текста сообщений: ещё и «шапки», которые модель иногда дописывает. */
     function cleanReply(t) {
         return stripThink(t)
@@ -1766,6 +1769,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         <div class="sh-chips">${Object.entries(chips).map(([k, v]) => `<button class="sh-chip ${ui.channel === k ? 'on' : ''}" data-act="channel" data-ch="${k}">${esc(k === 'species' && s.profile.species ? s.profile.species : v)}</button>`).join('')}</div>
         <div class="sh-card sh-compose">
           <textarea id="sh-post" rows="2" placeholder="Что нового, ${esc(s.profile.name)}?"></textarea>
+          <div class="sh-row sh-mediain"><select id="sh-post-kind" aria-label="Вложение"><option value="">Без вложения</option><option value="photo">📷 Фото</option><option value="video">🎬 Видео</option></select><input id="sh-post-media" placeholder="Что на фото или видео — опишите"></div>
           <div class="sh-row"><select id="sh-post-ch">${Object.entries(CHANNELS).filter(([k]) => k !== 'all').map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select>
           <button class="sh-btn sm" data-act="post">Опубликовать</button></div>
         </div>
@@ -1851,7 +1855,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         <div class="sh-row sh-card"><input id="sh-newchat" placeholder="Имя человека"><button class="sh-btn sm" data-act="newChat">Написать</button></div>
         ${list.length ? list.map((t) => {
         const last = t.msgs[t.msgs.length - 1];
-        return `<button class="sh-li" data-act="go" data-view="thread" data-param="${t.id}">${t.kind === 'official' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#6b4a4f,#8a6168)"><i class="fa-solid fa-building-columns"></i></span>' : t.kind === 'group' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#4f5a75,#6c7897)"><i class="fa-solid fa-users"></i></span>' : ava(t.name, false, t.species)}<div><b>${esc(t.name)}</b> ${t.kind === 'group' ? badge('группа') : t.kind === 'official' ? badge('официально', 'bad') : t.species ? badge(t.species) : ''}<small>${last ? esc((last.me ? 'Вы: ' : '') + last.text).slice(0, 70) : 'Нет сообщений'}</small></div>${t.unread ? `<b class="sh-dot">${t.unread}</b>` : ''}</button>`;
+        return `<button class="sh-li" data-act="go" data-view="thread" data-param="${t.id}">${t.kind === 'official' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#6b4a4f,#8a6168)"><i class="fa-solid fa-building-columns"></i></span>' : t.kind === 'group' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#4f5a75,#6c7897)"><i class="fa-solid fa-users"></i></span>' : ava(t.name, false, t.species)}<div><b>${esc(t.name)}</b> ${t.kind === 'group' ? badge('группа') : t.kind === 'official' ? badge('официально', 'bad') : t.species && !mundane(s) ? badge(t.species) : ''}<small>${last ? esc((last.me ? 'Вы: ' + last.text : stripThink(last.text).trim())).slice(0, 70) : 'Нет сообщений'}</small></div>${t.unread ? `<b class="sh-dot">${t.unread}</b>` : ''}</button>`;
     }).join('') : empty('Диалогов пока нет. Напишите кому-нибудь из ленты или найдите пару в знакомствах.')}`;
     }
     function threadView(s, id) {
@@ -1860,12 +1864,12 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         th.unread = 0;
         if (needsRelSync(s, th)) setTimeout(() => syncRel(s, th).catch((e) => logErr('Отношения', e)), 0);
         const rl = th.relSyncing ? 'определяю отношения…' : relLabel(th), rv = Math.round(th.rel || 0);
-        return `<div class="sh-ttop">${head(th.name, `${th.species ? esc(th.species) + ', ' : ''}<i class="fa-solid fa-lock"></i> зашифровано`)}
+        return `<div class="sh-ttop">${head(th.name, `${th.species && !mundane(s) ? esc(th.species) + ', ' : ''}<i class="fa-solid fa-lock"></i> зашифровано`)}
         ${th.kind === 'group' || th.kind === 'official' ? '' : `<div class="sh-rel"><div><small>${esc(rl)}${th.beef ? ' · бифф' : ''}${th.kind === 'char' && s.profile.relWithChar && rl !== 'пара' ? ' · вы пара' : ''}${relevantForSync(s, th) && !th.relSyncing ? ` <button class="sh-relsync" data-act="syncRel" data-id="${th.id}" title="${esc(th.relNote || 'Обновить по истории')}" aria-label="Обновить отношения по истории"><i class="fa-solid fa-rotate"></i></button>` : ''}</small><div class="sh-relbar"><span class="${rv < 0 ? 'neg' : ''}" style="width:${Math.abs(rv) / 2}%;${rv < 0 ? 'right:50%' : 'left:50%'}"></span></div></div>
           <button class="sh-btn sm ghost" data-act="go" data-view="meet" data-param="${th.id}"><i class="fa-solid fa-calendar-plus"></i> Встреча</button></div>`}</div>
         <div class="sh-msgs">${th.msgs.map((m) => m.sys
         ? `<div class="sh-sys">${esc(m.text)}</div>`
-        : `<div class="sh-msg ${m.me ? 'me' : ''}">${m.from ? `<b>${esc(m.from)}</b>` : ''}${esc(m.text)}<time>${fmtT(m.gt ?? m.t)}</time></div>`).join('')}
+        : `<div class="sh-msg ${m.me ? 'me' : ''}">${m.from ? `<b>${esc(m.from)}</b>` : ''}${esc(m.me ? m.text : stripThink(m.text).trim())}<time>${fmtT(m.gt ?? m.t)}</time></div>`).join('')}
         ${th.typing ? `<div class="sh-msg typing">${esc(th.name)} печатает…</div>` : ''}</div>
         <div class="sh-composer">${th.pendingMeet ? `<div class="sh-card sh-pending"><b><i class="fa-solid fa-handshake"></i> Похоже, вы договорились о встрече</b>
           <small>${esc(KINDS[th.pendingMeet.kind])}, ${fmtWhen(th.pendingMeet.at)}, ${esc(PLACES[th.pendingMeet.place])}${th.pendingMeet.note ? ` (${esc(th.pendingMeet.note)})` : ''}</small>
@@ -2460,6 +2464,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     /* ───────────────────────── действия ───────────────────────── */
 
     function openThread(s, name, species = '', bio = '', kind = 'dm') {
+        if (mundane(s)) species = '';
         name = String(name).trim();
         let th = s.threads.find((t) => t.name.toLowerCase() === name.toLowerCase());
         if (!th) {
@@ -2543,6 +2548,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const quarrel = ct?.conflict ? ` Сейчас они в ссоре: ${ct.conflict.why}.` : '';
         return `\n${c} (персонаж основной истории) МОЖЕТ оставить комментарий, но не обязан. Его отношения с ${s.profile.name}: ${rel}.${quarrel} Реши по его характеру и этим отношениям: близкий или влюблённый поддержит; враг съязвит, поддразнит или демонстративно промолчит; в ссоре — промолчит, ответит холодно или колко; незнакомец обычно не комментирует. Если молчание уместнее — не включай его. Не противоречь текущей сцене.`;
     }
+    const postText = (p) => `${p.text || ''}${p.media ? ` [${p.kind === 'video' ? 'видео' : 'фото'}: ${p.media}]` : ''}`;
     async function aiComments(s, p, task, scoreWhat) {
         const prev = shownComments(p).slice(-12).map((c) => `${c.author}${c.replyTo ? ` → ${c.replyTo}` : ''}: ${c.text}`).join('\n');
         const st = p.story ? s.stories.find((x) => x.title === p.story) : null;
@@ -2551,7 +2557,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             p.mine && cancelled(s) ? `Сейчас ${s.profile.name} «отменяют» в сети: большинство комментаторов настроены враждебно, лишь пара человек заступается.` : '',
         ].filter(Boolean).join('\n');
         const scoreFmt = scoreWhat ? `\nТакже оцени ${scoreWhat} ${s.profile.name}: authority (−5…5 — насколько это подняло авторитет ${s.profile.name}: остроумие, смелость, поддержка, интересная мысль — плюс; грубость, кринж, глупость — минус), controversy (0…10 — насколько спорно или токсично), sentiment (positive, mixed или negative — как восприняло сообщество). Реакция комментаторов должна соответствовать оценке.\nЕсли кто-то из комментаторов пообещал написать ${s.profile.name} в личку, начал договариваться с ней/ним о встрече или явно хочет продолжить разговор наедине — заполни followup: {"from":"имя этого комментатора","is_char":true если это ${ctx().name2} — персонаж основной истории, иначе false,"intent":"что он(а) напишет в личке — например, уточнит день, время и место встречи"}. Иначе followup: null.` : '';
-        const r = await aiJSON(`${world(s)}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${p.text}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии живые, как в настоящей соцсети: коротко, эмоционально, с эмодзи и сленгом, у каждого свой характер. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
+        const r = await aiJSON(`${world(s)}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${postText(p)}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии живые, как в настоящей соцсети: коротко, эмоционально, с эмодзи и сленгом, у каждого свой характер. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
         const arr = Array.isArray(r) ? r : (Array.isArray(r?.comments) ? r.comments : []);
         const list = arr.filter((c) => c && c.author && c.text && cleanName(c.author) !== s.profile.name).slice(0, 8).map((c) => ({
             id: uid(), author: cleanName(c.author), species: SP(s, c.species), text: stripMention(cleanMsg(c.text), cleanName(c.replyTo)).slice(0, 400),
@@ -2714,11 +2720,16 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         /* лента */
         channel: (d) => { ui.channel = d.ch; render(); },
         post: (d, el, s) => {
-            const text = val('sh-post');
-            if (!text) return toast('warning', 'Напишите текст поста.');
-            const p = { id: uid(), author: s.profile.name, species: s.profile.privacy.species ? s.profile.species : '', channel: val('sh-post-ch') || 'general', text, likes: 0, mine: true, t: Date.now(), comments: [], commentsLoaded: true };
+            let text = val('sh-post');
+            let kind = val('sh-post-kind'), media = val('sh-post-media');
+            // «>фото стола с едой» или «[фото: …]» в тексте тоже становится вложением
+            const m = /(?:^|\n)\s*(?:>\s*|\[\s*)(фото|видео|photo|video)\s*:?\s*([^\]\n]+)\]?\s*$/i.exec(text);
+            if (m && !media) { media = `${m[1].toLowerCase().replace('photo', 'фото').replace('video', 'видео')} ${m[2].trim().replace(/[.\s]+$/, '')}`; kind = /вид|vid/i.test(m[1]) ? 'video' : 'photo'; text = text.slice(0, m.index).trim(); }
+            if (media && !kind) kind = 'photo';
+            if (!text && !media) return toast('warning', 'Напишите текст поста или опишите фото.');
+            const p = { id: uid(), author: s.profile.name, kind: kind || undefined, media: media || undefined, species: s.profile.privacy.species ? s.profile.species : '', channel: val('sh-post-ch') || 'general', text, likes: 0, mine: true, t: Date.now(), comments: [], commentsLoaded: true };
             s.feed.unshift(p);
-            byId('sh-post').value = '';
+            byId('sh-post').value = ''; if (byId('sh-post-media')) byId('sh-post-media').value = ''; if (byId('sh-post-kind')) byId('sh-post-kind').value = '';
             save(s); render();
             questEvent(s, 'post', 1, '', text);
             engageMyPost(s, p);
