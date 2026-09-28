@@ -471,3 +471,5 @@
 #cityhub-phone .sh-composer { z-index: 5; }
 #cityhub-phone .sh-composer .sh-pending { margin: 0 0 8px; padding: 8px 10px; }
 #cityhub-phone .sh-composer .sh-pending .sh-row { margin-top: 6px; }
+
+#cityhub-phone .sh-composer { box-shadow: 0 16px 0 0 var(--sh-ink); }
