@@ -2501,6 +2501,11 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             const scene = currentScene();
             extra = `\n\n${charCard()}${lore ? `\n\nЛор мира, связанный с разговором:\n${lore}` : ''}${story ? `\n\nПоследние события основной истории (${th.name} их помнит):\n${story}` : ''}${scene ? `\n\n=== ТЕКУЩИЙ МОМЕНТ ИСТОРИИ (самое важное) ===\n${scene}\n=== конец ===\nПереписка происходит ПРЯМО СЕЙЧАС, в этот самый момент истории. Строго соблюдай его: где находится ${th.name}, что делает, рядом ли ${s.profile.name}, время суток. Нельзя противоречить сцене — например, писать «я на патруле», если в сцене ${th.name} стоит у двери ${s.profile.name}. Если они сейчас рядом, ${th.name} может удивиться сообщению («я же прямо за дверью»), ответить вслух или написать с учётом этого.` : ''}`;
         }
+        if (th.kind === 'dm') {
+            const sc = currentScene();
+            if (sc) extra += `\n\nТекущий момент основной истории: ${sc}`;
+        }
+        if (th.kind !== 'group') extra += `\n\nПРАВИЛО ПРИСУТСТВИЯ: кто по текущей сцене находится рядом с ${s.profile.name} (в одном помещении, в одной машине, за одним столом), общается с ней/ним вслух. Никогда не проси ${s.profile.name} «передать», «сказать» или «попросить» того, кто сейчас рядом с ней/ним, — ты бы сказал(а) это сам(а) или написал(а) этому человеку напрямую. Если ты сам(а) — ${th.name} — сейчас рядом с ${s.profile.name}, ${opts.initiate ? 'ты не пишешь в мессенджер: верни reply пустой строкой ""' : 'ответь с учётом этого (удивись сообщению, скажи вслух или коротко напиши)'}.`;
         const who = th.kind === 'group'
             ? `участников учебной группы «${th.name}» (${th.bio}). Пиши от лица одного из участников в формате "Имя: текст".`
             : th.kind === 'char'
@@ -2524,13 +2529,20 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             th.msgs.push({ me: false, from, text: r, t: Date.now() });
             th.t = Date.now();
             if (!(ui.open && ui.view === 'thread' && ui.param === th.id)) { th.unread = (th.unread || 0) + 1; toast('info', `${th.name}: ${r.slice(0, 80)}`); notify(s, `💬 ${th.name}: ${r.slice(0, 70)}`, 'social', { view: 'thread', param: th.id }); }
-        } else th.msgs.push({ sys: true, text: 'Сообщение не доставлено: ИИ не ответил. Попробуйте ещё раз.', t: Date.now() });
+        } else if (!opts.initiate) th.msgs.push({ sys: true, text: 'Сообщение не доставлено: ИИ не ответил. Попробуйте ещё раз.', t: Date.now() });
         save(s); render();
     }
 
     function cleanName(t) { return String(t || '').replace(/[*_`@]/g, '').trim().slice(0, 50); }
     function cleanMsg(t) { return cleanReply(t).replace(/\*\*|__/g, '').trim(); }
     /** Генерирует комментарии к посту с учётом уже написанных. */
+    /** Может ли {{char}} прокомментировать — с учётом ваших отношений. */
+    function charCommentRule(s) {
+        const c = ctx().name2, ct = s.threads.find((t) => t.kind === 'char');
+        const rel = ct ? relLabel(ct) : 'неизвестно';
+        const quarrel = ct?.conflict ? ` Сейчас они в ссоре: ${ct.conflict.why}.` : '';
+        return `\n${c} (персонаж основной истории) МОЖЕТ оставить комментарий, но не обязан. Его отношения с ${s.profile.name}: ${rel}.${quarrel} Реши по его характеру и этим отношениям: близкий или влюблённый поддержит; враг съязвит, поддразнит или демонстративно промолчит; в ссоре — промолчит, ответит холодно или колко; незнакомец обычно не комментирует. Если молчание уместнее — не включай его. Не противоречь текущей сцене.`;
+    }
     async function aiComments(s, p, task, scoreWhat) {
         const prev = shownComments(p).slice(-12).map((c) => `${c.author}${c.replyTo ? ` → ${c.replyTo}` : ''}: ${c.text}`).join('\n');
         const st = p.story ? s.stories.find((x) => x.title === p.story) : null;
@@ -2539,7 +2551,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             p.mine && cancelled(s) ? `Сейчас ${s.profile.name} «отменяют» в сети: большинство комментаторов настроены враждебно, лишь пара человек заступается.` : '',
         ].filter(Boolean).join('\n');
         const scoreFmt = scoreWhat ? `\nТакже оцени ${scoreWhat} ${s.profile.name}: authority (−5…5 — насколько это подняло авторитет ${s.profile.name}: остроумие, смелость, поддержка, интересная мысль — плюс; грубость, кринж, глупость — минус), controversy (0…10 — насколько спорно или токсично), sentiment (positive, mixed или negative — как восприняло сообщество). Реакция комментаторов должна соответствовать оценке.\nЕсли кто-то из комментаторов пообещал написать ${s.profile.name} в личку, начал договариваться с ней/ним о встрече или явно хочет продолжить разговор наедине — заполни followup: {"from":"имя этого комментатора","is_char":true если это ${ctx().name2} — персонаж основной истории, иначе false,"intent":"что он(а) напишет в личке — например, уточнит день, время и место встречи"}. Иначе followup: null.` : '';
-        const r = await aiJSON(`${world(s)}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${p.text}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}\n${task}\nКомментарии живые, как в настоящей соцсети: коротко, эмоционально, с эмодзи и сленгом, у каждого свой характер. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
+        const r = await aiJSON(`${world(s)}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${p.text}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии живые, как в настоящей соцсети: коротко, эмоционально, с эмодзи и сленгом, у каждого свой характер. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
         const arr = Array.isArray(r) ? r : (Array.isArray(r?.comments) ? r.comments : []);
         const list = arr.filter((c) => c && c.author && c.text && cleanName(c.author) !== s.profile.name).slice(0, 8).map((c) => ({
             id: uid(), author: cleanName(c.author), species: SP(s, c.species), text: stripMention(cleanMsg(c.text), cleanName(c.replyTo)).slice(0, 400),
@@ -2968,6 +2980,7 @@ ${story}
             const r = await aiJSON(`${world(s)}\n\nСгенерируй 6 свежих публикаций в ленту CityHub от разных жителей города разных возрастов и профессий (есть и добрые, и неприятные люди).${loreStudentsLine(s)} Весь текст на русском, включая названия видов (имена могут быть любыми). Каналы: general, study, clubs, dorms, species.${s.profile.species ? ` Минимум 1 пост от вида «${s.profile.species}» в канал species.` : ''}
 Лента живая: жители общаются МЕЖДУ СОБОЙ. 3–4 поста — сюжетные линии: продолжение активных сюжетов (ссоры, романы, соперничество, розыгрыши, расследования, сплетни) или начало нового. Участники отвечают друг другу постами и упоминают друг друга через @Имя, сюжет развивается от ленты к ленте. Персонажи сюжетов реагируют на вмешательство ${name}.
 ${storyTxt ? `Активные сюжеты:\n${storyTxt}\n` : ''}${rels ? `Отношения ${name} в CityHub (могут всплывать в ленте — биффы, флирт, сплетни): ${rels}\n` : ''}${cancelled(s) ? `Сейчас ${name} «отменяют» в сети — это активно обсуждают.\n` : ''}1–2 поста могут обсуждать ${name}: реакцию на вид и способности по правилам выше.
+${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx().name2} (персонаж основной истории): в его характере и манере, о том, что он мог бы написать прямо сейчас — с учётом событий истории и не противореча текущей сцене. Подпись — как он представился бы в соцсети (имя, можно с фамилией).` : ''}
 Формат: {"posts":[{"author":"Имя","species":"вид","channel":"general","text":"до 300 символов","media":"описание фото или видео, либо пустая строка","kind":"photo|video|reel|story","likes":12,"verified":true,"story":"название сюжета или пустая строка"}],"stories":[{"title":"название сюжета","cast":["Имя","Имя"],"summary":"что происходит сейчас, 1–2 предложения"}]}`);
             const arr = Array.isArray(r) ? r : (Array.isArray(r?.posts) ? r.posts : []);
             if (!arr.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
