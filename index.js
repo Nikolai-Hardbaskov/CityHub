@@ -1304,6 +1304,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const jump = ts - s.clock.t;
         s.clock.t = Math.round(ts);
         s.clock.source = source;
+        s.clock.initialized = true;
+        if (source === 'придуманное время') s.clock.generated = true;
+        else if (source === 'Horae' || source === 'время в основном чате' || source === 'ИИ: текущая сцена' || source === 'вручную') s.clock.generated = false;
         s.clock.synced = Date.now();
         if (Math.abs(jump) >= 2 * HOUR) notify(s, `🕰️ Время истории: ${fmtFull(s.clock.t)} (${source})`, 'social');
         tick();
@@ -1441,6 +1444,33 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const ts = parseClockStamp(date, time, s?.clock?.t || Date.now());
         return Number.isFinite(ts) ? { ts, key: JSON.stringify([source, date, time]) } : null;
     }
+    /** Сохраняет однажды выбранное время; ручная установка и известные часы не заменяются. */
+    function hasStoryClock(s) {
+        return !!s.clock.initialized || (!!s.clock.source && !['старт', 'включено'].includes(s.clock.source));
+    }
+    function inventStoryClock(s, suggestion = null) {
+        if (!gameMode(s) || hasStoryClock(s)) return false;
+        let knownDate = '';
+        for (const m of ctx().chat || []) {
+            if (!m || m.is_user || m.is_system) continue;
+            const dm = /(?:^|\n)\s*[*#\s\[]*(?:date|дата)\s*[:：]\s*([^\n\]]+)/im.exec(String(m.mes || ''));
+            const date = dm?.[1].replace(/\*/g, '').trim();
+            if (date && storyDateParts(date, s.clock.t)) knownDate = date;
+        }
+        const date = knownDate || suggestion?.date || '';
+        let ts = suggestion && parseClockStamp(date, suggestion.time, s.clock.t);
+        if (!Number.isFinite(ts)) {
+            const scene = currentScene().toLowerCase();
+            const time = /ноч[ьи]|полноч|night|midnight|深夜|晚上/.test(scene) ? '23:00'
+                : /вечер|закат|evening|sunset|傍晚/.test(scene) ? '19:00'
+                : /после полудня|afternoon|下午/.test(scene) ? '15:00'
+                : /полдень|обед|noon|lunch|中午/.test(scene) ? '12:00'
+                : /рассвет|dawn|黎明/.test(scene) ? '06:00' : '09:00';
+            ts = parseClockStamp(date, time, s.clock.t) ?? parseClockStamp('', time, s.clock.t);
+        }
+        setClock(s, ts, 'придуманное время', true);
+        return true;
+    }
     /** Раз в несколько ответов проверяет, не совершил ли пользователь правонарушение в истории. */
     let crimeBusy = false;
     async function scanCrimes(s) {
@@ -1488,7 +1518,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const base = previous ? previous.before : s.clock.t;
         const clockAtStart = s.clock.t;
         const remember = () => {
-            const entry = { id: snapshot.id, index: snapshot.index, key: snapshot.key, before: base, after: s.clock.t };
+            const entry = { id: snapshot.id, index: snapshot.index, key: snapshot.key, before: snapshot.align ? s.clock.t : base, after: s.clock.t };
             const i = records.findIndex((x) => x === previous || x.id === snapshot.id);
             if (i >= 0) records[i] = entry; else records.push(entry);
             if (records.length > 40) records.splice(0, records.length - 40);
@@ -1498,11 +1528,12 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const c = cfg();
         if (snapshot.align) {
             const revision = storyRevision();
-            const r = await aiJSON(`Последние события основной истории:\n${recentStory(12)}\n\nОпредели ТЕКУЩИЕ дату и время сцены, а не время встречи или воспоминания. Не отсчитывай минуты от часов телефона и не придумывай отсутствующие сведения. Если текущие часы не указаны явно — explicit:false.\nФормат: {"explicit":true,"date":"ГГГГ-ММ-ДД если дата явно известна, иначе null","time":"ЧЧ:ММ"}`);
+            const r = await aiJSON(`Последние события основной истории:\n${recentStory(12)}\n\nОпредели ТЕКУЩИЕ дату и время сцены, а не время встречи или воспоминания. Если часы известны из чата, верни explicit:true. Если время определить невозможно, ПРИДУМАЙ правдоподобное начальное игровое время с учётом сцены (утро, день, вечер или ночь), верни explicit:false и обязательно укажи time. Не выбирай случайно новое время для каждого сообщения: это только установка начальных часов истории.\nФормат: {"explicit":true или false,"date":"ГГГГ-ММ-ДД если дата известна из чата, иначе null","time":"ЧЧ:ММ"}`);
             if (!current() || revision !== storyRevision()) return;
-            if (!syncStoryClock(s) && s.clock.t === clockAtStart && r?.explicit === true) {
-                const ts = parseClockStamp(r.date, r.time, base);
-                if (Number.isFinite(ts) && ts !== s.clock.t) setClock(s, ts, 'ИИ: текущая сцена', true);
+            if (!syncStoryClock(s) && s.clock.t === clockAtStart) {
+                const ts = r?.explicit === true ? parseClockStamp(r.date, r.time, base) : null;
+                if (Number.isFinite(ts)) setClock(s, ts, 'ИИ: текущая сцена', true);
+                else inventStoryClock(s, r);
             }
             s.storyAlignedKey = `${snapshot.id}:${snapshot.key}`;
             remember(); return;
@@ -1643,6 +1674,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         let index = Number.isInteger(receivedId) ? receivedId : chat.length - 1;
         while (index >= 0 && (!chat[index] || chat[index].is_user || chat[index].is_system)) index--;
         const message = chat[index];
+        if (!anchored && (!cfg().syncAI || !message)) inventStoryClock(s);
         if (message) {
             const id = storyMessageId(message, index), key = storyMessageKey(message);
             const previous = (s.storyClockHistory || []).find((x) => x.id === id || x.index === index);
@@ -1655,9 +1687,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 const pending = session.replies.get(id);
                 session.replies.set(id, { index, message, id, key, received: received || !!pending?.received });
             }
-            if (first && !anchored && gameMode(s) && cfg().syncAI && s.storyAlignedKey !== `${id}:${key}`) {
+            if (first && !anchored && gameMode(s) && cfg().syncAI && (!hasStoryClock(s) || s.storyAlignedKey !== `${id}:${key}`)) {
                 const pending = session.replies.get(id);
-                if (!pending?.received) session.replies.set(id, { index, message, id, key, received: false, align: true });
+                if (!pending?.received || !hasStoryClock(s)) session.replies.set(id, { index, message, id, key, received: !!pending?.received, align: true });
             }
         }
         // Новая переписка с персонажем тоже получает отношения, даже при закрытом окне.
@@ -2362,7 +2394,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
           <label class="sh-toggle"><input type="checkbox" data-change="cfgBool" data-k="syncAI" ${c.syncAI ? 'checked' : ''}><span>ИИ определяет время по тексту</span></label>
           <label>Если оба выключены или не сработали — минут за каждый ответ истории<input type="number" min="0" max="120" data-change="cfg" data-k="stepMin" value="${esc(c.stepMin)}"></label>
           <button class="sh-btn sm ghost" data-act="checkHorae"><i class="fa-solid fa-link"></i> Проверить связь с Horae</button>
-          <small>Источник времени: Horae → явные дата и время текущей сцены → оценка ИИ → шаг за ответ. Синхронизация может исправлять дату и переводить часы назад. Нестандартные календари и время без точных часов не всегда можно перевести в дату CityHub. Пока история стоит, игровое время само не идёт.</small></div>`
+          <small>Источник времени: Horae → время текущей сцены из чата → придуманное начальное игровое время. Придуманное время сохраняется; дальше часы движутся по событиям истории или заданному шагу за ответ. Синхронизация может исправлять дату и переводить часы назад. Нестандартные календари не всегда можно перевести в дату CityHub. Пока история стоит, игровое время само не идёт.</small></div>`
         : '<div class="sh-note"><i class="fa-solid fa-clock"></i><span>Пары, дедлайны, встречи и задания идут по часам телефона. Подходит, если вы играете синхронно с реальным временем.</span></div>'}`;
     }
     function moreTab(s) {
@@ -2632,7 +2664,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.12 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.13 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
