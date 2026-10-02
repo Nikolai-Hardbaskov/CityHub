@@ -34,6 +34,9 @@
         injectDepth: 2,
         theme: 'pearl',         // тема оформления
         shareDMs: true,         // передавать переписку CityHub в основной чат
+        backgroundDMs: true,   // знакомые могут первыми писать при закрытом CityHub
+        incomingMin: 4,         // минимум реальных минут между инициативными сообщениями
+        incomingMax: 10,
         timeMode: 'game',       // для новых чатов: game — часы истории, real — реальное время
         syncHorae: true,        // брать время из расширения Horae, если найдено
         syncAI: true,           // ИИ определяет прошедшее время по тексту ответа
@@ -119,7 +122,7 @@
     };
     const badge = (t, cls = '') => t ? `<span class="sh-badge ${cls}">${esc(t)}</span>` : '';
     const empty = (t) => `<div class="sh-empty">${t}</div>`;
-    const head = (title, sub = '') => `<div class="sh-head"><button class="sh-icon" data-act="back" aria-label="Назад"><i class="fa-solid fa-chevron-left"></i></button><div><h3>${esc(title)}</h3>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
+    const head = (title, sub = '', mark = '') => `<div class="sh-head"><button class="sh-icon" data-act="back" aria-label="Назад"><i class="fa-solid fa-chevron-left"></i></button><div><h3>${esc(title)}${mark}</h3>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
     const toast = (type, msg) => { try { toastr[type](msg, 'CityHub'); } catch { /* нет toastr */ } };
 
     /* ───────────────────────── справочники ───────────────────────── */
@@ -1250,12 +1253,13 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 ? `${charCard()}${field(ch, 'first_mes') ? `\nПервое сообщение истории: ${macros(field(ch, 'first_mes')).slice(0, 1200)}` : ''}`
                 : `${th.name}${th.species ? ` (${th.species})` : ''}. ${th.bio || ''}${lp ? ` Из лора: ${lp.bio}${lp.relation ? `; для ${c.name2}: ${lp.relation}` : ''}.` : ''}`;
             const dms = th.msgs.filter((m) => !m.sys).slice(-10).map((m) => `${m.me ? s.profile.name : th.name}: ${m.text}`).join('\n');
-            const r = await aiJSON(`${about}\n\nПоследние события основной истории:\n${recentStory(20) || '(истории пока нет)'}\n\nПереписка в CityHub:\n${dms || '(не переписывались)'}\n\nОпредели, какие СЕЙЧАС отношения у ${th.name} с ${s.profile.name}. Опирайся на факты: история и переписка важнее карточки — если по карточке они не знакомы, а в истории уже подружились или начали встречаться, верь истории. Если они ещё ни разу не общались и не знакомы — known: false.\nФормат: {"known":true,"rel":число от −100 (вражда) до 100 (самые близкие),"status":"короткий статус по-русски: не знакомы, знакомые, приятели, друзья, близкие друзья, флирт, пара, соперники, неприязнь, вражда…","pair":true если они сейчас в романтических отношениях,"note":"одной фразой, на чём основан вывод"}`);
+            const r = await aiJSON(`${about}\n\nПоследние события основной истории:\n${recentStory(20) || '(истории пока нет)'}\n\nПереписка в CityHub:\n${dms || '(не переписывались)'}\n\nОпредели, какие СЕЙЧАС отношения у ${th.name} с ${s.profile.name}. Опирайся на факты: история и переписка важнее карточки — если по карточке они не знакомы, а в истории уже подружились или начали встречаться, верь истории. Если они ещё ни разу не общались и не знакомы — known: false.\nТакже оцени доступность ${th.name} для мессенджера ПО ФАКТАМ текущей сцены: сон, вождение, работа, занятие, операция, бой и другие дела, не позволяющие переписываться. Не считай занятой всю профессию постоянно; если человек просто разговаривает, гуляет или отдыхает, busy:false. В presence верни busy (boolean), reason (короткую причину), until (ГГГГ-ММ-ДД ЧЧ:ММ только если конец занятности явно известен, иначе null).\nФормат: {"known":true,"rel":число от −100 (вражда) до 100 (самые близкие),"status":"короткий статус по-русски: не знакомы, знакомые, приятели, друзья, близкие друзья, флирт, пара, соперники, неприязнь, вражда…","pair":true если они сейчас в романтических отношениях,"note":"одной фразой, на чём основан вывод","presence":{"busy":false,"reason":"","until":null}}`);
             if (S() !== s || epoch !== storySyncEpoch || revision !== storyRevision()
                 || dmRevision !== hash(JSON.stringify(th.msgs)) || !r || typeof r !== 'object') return;
             th.known = r.known !== false;
             th.rel = clamp(Math.round(+r.rel || 0), -100, 100);
             th.relAtSync = th.rel;
+            if (!opening) updateContactAvailability(s, th, r.presence);
             // Оценка вступления — предварительная: без ссор, примирений и смены статуса пары.
             if (!opening) {
                 if (!previousAccepted) {
@@ -2234,12 +2238,12 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     /* — чаты — */
     function chatsTab(s) {
         const list = [...s.threads].sort((a, b) => b.t - a.t);
-        const typing = (s.pendingDMs || []).map((pd) => `<div class="sh-li static">${ava(pd.from, false, pd.species)}<div><b>${esc(pd.isChar ? (s.threads.find((t) => t.kind === 'char')?.name || pd.from) : pd.from)}</b><small class="sh-typing">✍️ пишет вам…</small></div></div>`).join('');
+        const typing = (s.pendingDMs || []).map((pd) => `<div class="sh-li static">${ava(pd.from, false, pd.species)}<div><b>${esc(pd.isChar ? (s.threads.find((t) => t.kind === 'char')?.name || pd.from) : pd.from)}</b><small>ожидается сообщение</small></div></div>`).join('');
         return `<h3 class="sh-h">Сообщения <small><i class="fa-solid fa-lock"></i> сквозное шифрование</small></h3>${typing}
         <div class="sh-row sh-card"><input id="sh-newchat" placeholder="Имя человека"><button class="sh-btn sm" data-act="newChat">Написать</button></div>
         ${list.length ? list.map((t) => {
         const last = t.msgs[t.msgs.length - 1];
-        return `<button class="sh-li" data-act="go" data-view="thread" data-param="${t.id}">${t.kind === 'official' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#6b4a4f,#8a6168)"><i class="fa-solid fa-building-columns"></i></span>' : t.kind === 'group' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#4f5a75,#6c7897)"><i class="fa-solid fa-users"></i></span>' : ava(t.name, false, t.species)}<div><b>${esc(t.name)}</b> ${t.kind === 'group' ? badge('группа') : t.kind === 'official' ? badge('официально', 'bad') : t.species && !mundane(s) ? badge(t.species) : ''}<small>${last ? esc((last.me ? 'Вы: ' + last.text : stripThink(last.text).trim())).slice(0, 70) : 'Нет сообщений'}</small></div>${t.unread ? `<b class="sh-dot">${t.unread}</b>` : ''}</button>`;
+        return `<button class="sh-li" data-act="go" data-view="thread" data-param="${t.id}">${t.kind === 'official' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#6b4a4f,#8a6168)"><i class="fa-solid fa-building-columns"></i></span>' : t.kind === 'group' ? '<span class="sh-ava" style="background:linear-gradient(135deg,#4f5a75,#6c7897)"><i class="fa-solid fa-users"></i></span>' : ava(t.name, false, t.species)}<div><b>${esc(t.name)}</b>${presenceHTML(s, t)} ${t.kind === 'group' ? badge('группа') : t.kind === 'official' ? badge('официально', 'bad') : t.species && !mundane(s) ? badge(t.species) : ''}<small>${last ? esc((last.me ? 'Вы: ' + last.text : stripThink(last.text).trim())).slice(0, 70) : 'Нет сообщений'}</small></div>${t.unread ? `<b class="sh-dot">${t.unread}</b>` : ''}</button>`;
     }).join('') : empty('Диалогов пока нет. Напишите кому-нибудь из ленты или найдите пару в знакомствах.')}`;
     }
     function threadView(s, id) {
@@ -2248,13 +2252,13 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         th.unread = 0;
         if (needsRelSync(s, th)) scheduleStorySync();
         const rl = th.relSyncing ? 'определяю отношения…' : relLabel(th), rv = Math.round(th.rel || 0);
-        return `<div class="sh-ttop">${head(th.name, `${th.species && !mundane(s) ? esc(th.species) + ', ' : ''}<i class="fa-solid fa-lock"></i> зашифровано`)}
+        return `<div class="sh-ttop">${head(th.name, `${th.kind === 'group' || th.kind === 'official' ? '' : `${contactOnline(s, th) ? 'онлайн' : contactBusy(s, th) ? `не в сети · ${esc(presenceState(th).reason || 'занят(а)')}` : 'не в сети'} · `}${th.species && !mundane(s) ? esc(th.species) + ', ' : ''}<i class="fa-solid fa-lock"></i> зашифровано`, presenceHTML(s, th))}
         ${th.kind === 'group' || th.kind === 'official' ? '' : `<div class="sh-rel"><div><small>${esc(rl)}${th.beef ? ' · бифф' : ''}${th.kind === 'char' && s.profile.relWithChar && rl !== 'пара' ? ' · вы пара' : ''}${relevantForSync(s, th) && !th.relSyncing ? ` <button class="sh-relsync" data-act="syncRel" data-id="${th.id}" title="${esc(th.relNote || 'Обновить по истории')}" aria-label="Обновить отношения по истории"><i class="fa-solid fa-rotate"></i></button>` : ''}</small><div class="sh-relbar"><span class="${rv < 0 ? 'neg' : ''}" style="width:${Math.abs(rv) / 2}%;${rv < 0 ? 'right:50%' : 'left:50%'}"></span></div></div>
           <button class="sh-btn sm ghost" data-act="go" data-view="meet" data-param="${th.id}"><i class="fa-solid fa-calendar-plus"></i> Встреча</button></div>`}</div>
         <div class="sh-msgs">${th.msgs.map((m) => m.sys
         ? `<div class="sh-sys">${esc(m.text)}</div>`
         : `<div class="sh-msg ${m.me ? 'me' : ''}">${m.from ? `<b>${esc(m.from)}</b>` : ''}${esc(m.me ? m.text : stripThink(m.text).trim())}<time>${fmtT(m.gt ?? m.t)}</time></div>`).join('')}
-        ${th.typing ? `<div class="sh-msg typing">${esc(th.name)} печатает…</div>` : ''}</div>
+        ${th.typing ? `<div class="sh-msg typing">${esc(th.name)} печатает…</div>` : th.pendingReply && !th.pendingReply.initiate ? '<div class="sh-sys">Сообщение отправлено. Собеседник ответит, когда сможет.</div>' : ''}</div>
         <div class="sh-composer">${th.pendingMeet ? `<div class="sh-card sh-pending"><b><i class="fa-solid fa-handshake"></i> Похоже, вы договорились о встрече</b>
           <small>${esc(KINDS[th.pendingMeet.kind])}, ${fmtWhen(th.pendingMeet.at)}, ${esc(PLACES[th.pendingMeet.place])}${th.pendingMeet.note ? ` (${esc(th.pendingMeet.note)})` : ''}</small>
           ${th.pendingMeet.conflict ? `<small class="sh-bad-t"><i class="fa-solid fa-triangle-exclamation"></i> В это время у вас пара «${esc(th.pendingMeet.conflict.subject)}» (${fmtT(th.pendingMeet.conflict.start)}–${fmtT(th.pendingMeet.conflict.end)}).</small>
@@ -2745,6 +2749,10 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
           <label class="sh-toggle"><input type="checkbox" data-change="cfgBool" data-k="shareDMs" ${c.shareDMs ? 'checked' : ''}><span>Передавать переписку CityHub в основной чат</span></label>
           ${num('chatContext', 'Сколько сообщений истории помнит персонаж в CityHub')}
           ${num('injectDepth', 'Глубина вставки в чат')}</div>
+        <div class="sh-card sh-form"><h4>Сообщения на фоне</h4>
+          <label class="sh-toggle"><input type="checkbox" data-change="cfgBool" data-k="backgroundDMs" ${c.backgroundDMs ? 'checked' : ''}><span>Собеседники могут писать первыми</span></label>
+          ${num('incomingMin', 'Минимум минут между инициативными сообщениями')}${num('incomingMax', 'Максимум минут между инициативными сообщениями')}
+          <p class="sh-muted">Работает при закрытом окне CityHub, пока открыта вкладка SillyTavern. Зелёная точка — онлайн, серая — не в сети. Ответ может прийти сразу или через несколько реальных минут; занятый человек дождётся освобождения либо ненадолго зайдёт ответить. Сообщения генерирует подключённая модель.</p></div>
         <div class="sh-card sh-form"><h4>Правила города</h4>
           ${num('yearMonths', 'Длина года, месяцев')}${num('maxStrikes', 'Правонарушений до ограничения свободы (баллов)')}${num('lowGpa', 'Порог низкого рейтинга, %')}${num('lowGpaDays', 'Дней с низким рейтингом до ограничения свободы')}
           ${num('checkInEarlyMin', 'Отметка до начала работы / учёбы / прогулки, мин')}${num('deadlineOffsetMin', 'Срок поручения до следующей смены, мин')}${num('extraTaskHours', 'Срок доп. задания, ч')}
@@ -2762,7 +2770,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.16 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.17 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -2880,9 +2888,125 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         else th.pendingMeet.problem = meetProblem(s, at, place);
         if (!(ui.open && ui.view === 'thread' && ui.param === th.id)) notify(s, `🤝 Похоже, вы договорились с ${th.name} о встрече ${fmtWhen(at)}. Подтвердите в чате.`, 'important', { view: 'thread', param: th.id });
     }
+    const messengerJobs = new WeakSet();
+    const between = (lo, hi) => lo + Math.random() * (hi - lo);
+    function presenceState(th) {
+        if (!th.presence) {
+            const now = Date.now(), online = Math.random() < 0.55;
+            th.presence = { onlineUntil: online ? now + between(2, 5) * MIN : 0,
+                checkAt: now + between(2, 5) * MIN, busy: false, busyUntil: 0, reason: '' };
+        }
+        return th.presence;
+    }
+    function contactBusy(s, th) {
+        const p = presenceState(th);
+        return p.busy && (!p.busyUntil || NOW() < p.busyUntil);
+    }
+    function contactOnline(s, th) {
+        const p = presenceState(th), now = Date.now();
+        return now < (p.visitUntil || 0) || (!contactBusy(s, th) && now < p.onlineUntil);
+    }
+    function presenceHTML(s, th) {
+        if (th.kind === 'group' || th.kind === 'official') return '';
+        const online = contactOnline(s, th);
+        return `<span class="sh-presence ${online ? 'online' : 'offline'}" role="img" aria-label="${online ? 'Онлайн' : 'Не в сети'}" title="${esc(online ? 'Онлайн' : contactBusy(s, th) ? `Не в сети: ${presenceState(th).reason || 'занят(а)'}` : 'Не в сети')}"></span>`;
+    }
+    function updateContactAvailability(s, th, value) {
+        if (!value || typeof value.busy !== 'boolean') return;
+        const p = presenceState(th);
+        p.busy = value.busy;
+        p.reason = cleanMsg(value.reason || '').slice(0, 100);
+        const until = parseStoryTime(value.until, NOW());
+        p.busyUntil = value.busy ? until > NOW() ? until : NOW() + 45 * MIN : 0;
+        if (p.busy) { p.onlineUntil = 0; p.visitUntil = 0; }
+        else if (p.onlineUntil <= Date.now()) { p.onlineUntil = Date.now() + between(1, 3) * MIN; }
+        p.checkAt = Date.now() + between(2, 5) * MIN;
+    }
+    function scheduleReply(s, th, opts = {}) {
+        const now = Date.now(), online = contactOnline(s, th), busy = contactBusy(s, th);
+        const quick = online && Math.random() < 0.55;
+        const old = th.pendingReply;
+        th.pendingReply = { id: uid(), at: old && !old.initiate ? Math.min(old.at, now + 1500) : now + (quick ? between(1, 5) * 1000 : between(2, 5) * MIN),
+            waitForFree: busy && Math.random() < 0.6, fallbackAt: now + between(8, 15) * MIN,
+            initiate: opts.initiate || '', attempts: 0 };
+        save(s); render();
+        return th.pendingReply;
+    }
+    function incomingDelay() {
+        const lo = clamp(Number(cfg().incomingMin) || 4, 1, 120), hi = clamp(Number(cfg().incomingMax) || 10, lo, 180);
+        return between(lo, hi) * MIN;
+    }
+    function tickMessenger() {
+        const s = S();
+        if (!s?.auth) return;
+        const now = Date.now(); let changed = false;
+        for (const th of s.threads) {
+            if (th.kind === 'group' || th.kind === 'official') continue;
+            const p = presenceState(th);
+            if (p.busy && p.busyUntil && NOW() >= p.busyUntil) { p.busy = false; p.reason = ''; p.onlineUntil = now + between(1, 3) * MIN; changed = true; }
+            if (now >= p.checkAt) {
+                p.onlineUntil = !contactBusy(s, th) && Math.random() < 0.6 ? now + between(1, 4) * MIN : 0;
+                p.checkAt = now + between(2, 5) * MIN; changed = true;
+            }
+        }
+        if (cfg().backgroundDMs && hasStoryProgress()) {
+            if (!s.nextIncomingAt) { s.nextIncomingAt = now + incomingDelay(); changed = true; }
+            if (now >= s.nextIncomingAt && !mainGenerating && !cityAIActive) {
+                if (!s.threads.some((t) => t.kind === 'char') && ctx().name2 && !ctx().groupId) {
+                    s.threads.push({ id: uid(), name: ctx().name2, kind: 'char', bio: '', species: '', msgs: [], t: now, unread: 0, rel: 0 });
+                }
+                const eligible = s.threads.filter((t) => (t.kind === 'char' || t.kind === 'dm') && !t.pendingReply && !t.typing && !t.unread
+                    && (t.kind === 'char' || t.msgs.some((m) => !m.sys)) && t.known !== false
+                    && now - (t.lastInitiatedAt || 0) >= 20 * MIN && now - (t.lastIncomingAt || 0) >= MIN
+                    && ![...t.msgs].reverse().find((m) => !m.sys)?.me);
+                if (eligible.length) {
+                    const th = eligible[Math.floor(Math.random() * eligible.length)];
+                    scheduleReply(s, th, { initiate: `${th.name} сам(а) пишет ${s.profile.name} первым(ой). Найди естественный повод по карточке, текущей истории и вашей переписке: интерес к делам, продолжение разговора, забота, бытовой вопрос или предложение. Не повторяй последнее сообщение, не выдумывай уже произошедшие события и чужие просьбы. Если повода нет или вы сейчас рядом, верни reply пустой строкой. Это инициативное сообщение, пользователь ничего нового не писал.` });
+                    th.lastInitiatedAt = now;
+                }
+                s.nextIncomingAt = now + incomingDelay(); changed = true;
+            }
+        } else if (s.nextIncomingAt) { s.nextIncomingAt = 0; changed = true; }
+        if (!mainGenerating && !cityAIActive) for (const th of s.threads) {
+            const job = th.pendingReply;
+            if (!job || now < job.at || th.typing || messengerJobs.has(th)) continue;
+            if (job.waitForFree && contactBusy(s, th) && now < job.fallbackAt) continue;
+            messengerJobs.add(th);
+            const epoch = storySyncEpoch;
+            const queued = enqueue(s, async () => {
+                try {
+                    if (S() !== s || epoch !== storySyncEpoch || th.pendingReply !== job || mainGenerating || cityAIActive) return;
+                    if (job.waitForFree && contactBusy(s, th) && Date.now() < job.fallbackAt) return;
+                    const p = presenceState(th);
+                    p.visitUntil = Date.now() + 2 * MIN; p.onlineUntil = p.visitUntil;
+                    const result = await reply(s, th, { initiate: job.initiate, jobId: job.id });
+                    if (S() !== s || epoch !== storySyncEpoch || th.pendingReply !== job) return;
+                    if (result === 'retry' && ++job.attempts < 3) job.at = Date.now() + 30 * 1000;
+                    else delete th.pendingReply;
+                    save(s);
+                } catch (e) {
+                    logErr('Фоновый ответ', e);
+                    if (S() === s && th.pendingReply === job) {
+                        if (++job.attempts < 3) job.at = Date.now() + MIN;
+                        else {
+                            delete th.pendingReply;
+                            if (!job.initiate) th.msgs.push({ sys: true, text: 'Ответ пока не получен. Проверьте подключение к модели и напишите снова.', t: Date.now() });
+                            save(s);
+                        }
+                    }
+                } finally { messengerJobs.delete(th); th.typing = false; if (S() === s) { render(); updateFab(); } }
+            });
+            // enqueue может пропустить задачу целиком, если пользователь сменил чат до её запуска.
+            queued.finally(() => messengerJobs.delete(th));
+        }
+        if (changed) save(s);
+        if (ui.open && !isTyping()) render(); else updateFab();
+    }
+
     async function reply(s, th, opts = {}) {
         th.typing = true; render();
         const revision = storyRevision(), epoch = storySyncEpoch;
+        const dmRevision = hash(JSON.stringify(th.msgs));
         const hist = th.msgs.filter((m) => !m.sys).slice(-14).map((m) => `${m.me ? s.profile.name : (m.from || th.name)}: ${m.text}`).join('\n');
         let extra = '';
         if (th.kind === 'char') {
@@ -2907,15 +3031,16 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const relTxt = th.kind === 'group' ? '' : `\nОтношение ${th.name} к ${s.profile.name}: ${relLabel(th)} (${Math.round(th.rel || 0)} из 100, шкала от −100 вражда до 100 близость).${th.relNote ? ` ${th.relNote}` : ''}${relLabel(th) === 'не знакомы' ? ` Они не знакомы — ${th.name} пишет как незнакомому человеку.` : ''}${th.kind === 'char' && s.profile.relWithChar ? ` ${th.name} и ${s.profile.name} — пара.` : ''}${jealousNote(s, th)}`;
         const raw = await aiRaw(`${world(s)}${extra}${relTxt}\n\nЭто переписка в защищённом мессенджере CityHub. Ты отвечаешь за ${who}\n\nИстория переписки:\n${hist || '(переписки ещё не было)'}\n\n${opts.initiate ? `${opts.initiate}\n\n` : ''}Напиши следующее сообщение собеседника: 1–3 предложения, живо, в стиле мессенджера, по-русски. Реагируй на вид и способности ${s.profile.name} по правилам выше — особенно в начале знакомства, но не в каждом сообщении. Отношения развиваются естественно: грубость портит, забота, юмор и флирт сближают; возможны дружба, роман или вражда.${th.kind === 'group' ? '' : `\nСейчас ${new Date(NOW()).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} (сегодня ${isoDay(NOW())}).\nОтветь JSON: {"reply":"текст сообщения","delta":число от −6 до 6 — как последнее сообщение ${s.profile.name} изменило отношение,"flirt":true если в переписке сейчас флирт, иначе false,"meet":null}\nПоле meet заполняй, ТОЛЬКО если с учётом твоего ответа вы с ${s.profile.name} явно договорились встретиться и понятны день и время: {"date":"ГГГГ-ММ-ДД","time":"ЧЧ:ММ","kind":"date — свидание, friends — дружеская встреча, study — учёба","place":"break — на перемене, after — после пар, skip — вместо пар, dorm — в общежитии, cafe — в кафе города, city — в городе","note":"где именно, коротко"}. Если лишь обсуждаете или время не названо — null.\nЕсли ${s.profile.name} говорит, что в назначенное время у неё/него пара, отреагируй строго в характере персонажа: кто-то подначивает прогулять («да брось, одна пара ничего не решит»), кто-то сразу соглашается перенести и предлагает другое время, кто-то обижается или ворчит. Заполняй meet только когда договорённость снова окончательная: новое время, либо прежнее с place "skip", если ${s.profile.name} согласился(ась) прогулять.`}`);
         th.typing = false;
-        if (S() !== s || epoch !== storySyncEpoch) return;
+        if (S() !== s || epoch !== storySyncEpoch || (opts.jobId && th.pendingReply?.id !== opts.jobId) || dmRevision !== hash(JSON.stringify(th.msgs))) return 'retry';
         if (revision !== storyRevision()) {
+            if (opts.jobId) return 'retry';
             if (!opts.initiate) th.msgs.push({ sys: true, text: 'Основная история изменилась во время ответа. Отправьте сообщение ещё раз, чтобы получить ответ по текущей сцене.', t: Date.now() });
             save(s); render(); scheduleStorySync(); return;
         }
         const js = th.kind === 'group' ? null : parseJSON(raw);
         let r = cleanReply(js && typeof js.reply === 'string' ? js.reply : raw).replace(/^["«]+|["»]+$/g, '');
         const lastMine = [...th.msgs].reverse().find((m) => m.me);
-        if (js && th.kind !== 'group') updateRel(s, th, Number(js.delta) || 0, js.flirt === true || js.flirt === 'true', 8, lastMine ? `переписка в CityHub: ${s.profile.name} написал(а) «${lastMine.text.slice(0, 140)}»` : '');
+        if (js && th.kind !== 'group' && !opts.initiate) updateRel(s, th, Number(js.delta) || 0, js.flirt === true || js.flirt === 'true', 8, lastMine ? `переписка в CityHub: ${s.profile.name} написал(а) «${lastMine.text.slice(0, 140)}»` : '');
         if (js?.meet && typeof js.meet === 'object') detectMeet(s, th, js.meet);
         if (r) {
             let from;
@@ -2925,9 +3050,11 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             r = cleanMsg(r);
             th.msgs.push({ me: false, from, text: r, t: Date.now() });
             th.t = Date.now();
+            th.lastIncomingAt = th.t;
             if (!(ui.open && ui.view === 'thread' && ui.param === th.id)) { th.unread = (th.unread || 0) + 1; toast('info', `${th.name}: ${r.slice(0, 80)}`); notify(s, `💬 ${th.name}: ${r.slice(0, 70)}`, 'social', { view: 'thread', param: th.id }); }
         } else if (!opts.initiate) th.msgs.push({ sys: true, text: 'Сообщение не доставлено: ИИ не ответил. Попробуйте ещё раз.', t: Date.now() });
         save(s); render();
+        return r ? 'delivered' : 'empty';
     }
 
     function cleanName(t) { return String(t || '').replace(/[*_`@]/g, '').trim().slice(0, 50); }
@@ -3003,7 +3130,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (!th) { th = { id: uid(), name: pd.from, species: pd.species, bio: '', kind: 'dm', msgs: [], t: Date.now(), unread: 0, rel: 10 }; s.threads.unshift(th); }
         }
         if (th.typing) return false;
-        reply(s, th, { initiate: `${th.name} сам(а) пишет ${s.profile.name} первым(ой) в личку — продолжение разговора в комментариях ленты:\n${pd.context}\nЦель сообщения: ${pd.intent || 'продолжить разговор наедине'}. Если в комментариях договаривались встретиться — предложи или уточни конкретные день, время и место.` });
+        if (th.pendingReply) return false;
+        scheduleReply(s, th, { initiate: `${th.name} сам(а) пишет ${s.profile.name} первым(ой) в личку — продолжение разговора в комментариях ленты:\n${pd.context}\nЦель сообщения: ${pd.intent || 'продолжить разговор наедине'}. Если в комментариях договаривались встретиться — предложи или уточни конкретные день, время и место.` });
         return true;
     }
     /** Реакция аудитории на пост пользователя: комментарии приходят постепенно, растут лайки и подписчики. */
@@ -3215,7 +3343,7 @@ ${s.profile.name} приглашает ${th.name}${th.species ? ` (${th.species}
             th.t = Date.now();
             th.pendingMeet = null;
             save(s); render();
-            return reply(s, th);
+            return scheduleReply(s, th);
         },
         skipPending: (d, el, s) => {
             const th = s.threads.find((t) => t.id === d.id);
@@ -3256,7 +3384,7 @@ ${s.profile.name} приглашает ${th.name}${th.species ? ` (${th.species}
                 updateRel(s, th, sameDay ? -5 : -2, false, 8, `${s.profile.name} отменил(а) встречу${sameDay ? ' в последний момент' : ''}`);
                 th.msgs.push({ me: true, text: `❌ Прости, не получится ${fmtWhen(m.at)} — отменяю встречу.`, t: NOW() });
                 save(s); render();
-                return reply(s, th);
+                return scheduleReply(s, th);
             }
             save(s); render();
         },
@@ -3416,12 +3544,12 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
         send: (d, el, s) => {
             const th = s.threads.find((t) => t.id === d.id);
             const text = val('sh-msg');
-            if (!th || !text || th.typing) return;
-            th.msgs.push({ me: true, text, t: Date.now() }); th.t = Date.now();
+            if (!th || !text) return;
+            th.msgs.push({ id: uid(), me: true, text, t: Date.now() }); th.t = Date.now();
             byId('sh-msg').value = '';
             questEvent(s, 'dm', 1, '', `${th.name}: ${text}`);
             save(s);
-            return reply(s, th);
+            return scheduleReply(s, th);
         },
 
         /* знакомства */
@@ -4005,6 +4133,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
         if (s0) {
             storySessions.delete(s0);
             for (const th of s0.threads) th.relSyncing = false;
+            for (const th of s0.threads) th.typing = false;
         }
         if (s0 && s0.auth && !s0.campusLoreAt) enqueue(s0, async () => { await extractCampusLore(s0); });
         if (s0 && s0.auth && !s0.genClubsAt) enqueue(s0, async () => { await genClubs(s0); });
@@ -4051,6 +4180,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
             catch (e) { logErr('Проверка времени', e); }
             if (!mainGenerating && !cityAIActive) scheduleStorySync();
         }, 5000);
+        setInterval(() => { try { tickMessenger(); } catch (e) { logErr('Фоновый мессенджер', e); } }, 3000);
         setInterval(() => {
             try { tick(); } catch (e) { logErr('Таймер', e); }
             updateInjection();
