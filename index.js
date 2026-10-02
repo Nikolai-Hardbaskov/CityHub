@@ -547,6 +547,21 @@
         }
         return out.join('\n');
     }
+    /** Вступление закрепляется только после ответа пользователя на него. */
+    function hasStoryProgress() {
+        let opening = false;
+        for (const m of ctx().chat || []) {
+            if (!m || m.is_system) continue;
+            const text = String(m.mes || '')
+                .replace(/<think(?:ing)?\b[^>]*>[\s\S]*?(<\/think(?:ing)?>|$)/gi, '')
+                .replace(new RegExp(`<(${STRIP_TAGS})\\b[^>]*>[\\s\\S]*?(<\\/\\1\\s*>|$)`, 'gi'), '')
+                .replace(/<[^>]+>/g, ' ').trim();
+            if (!text) continue;
+            if (m.is_user && opening) return true;
+            if (!m.is_user) opening = true;
+        }
+        return false;
+    }
     /** Последнее сообщение истории полностью — «что происходит прямо сейчас». */
     function currentScene() {
         const chat = ctx().chat || [];
@@ -820,7 +835,7 @@
         }
         const so = soc(s);
         if (refreshQuests(s)) ch = true;
-        for (const q of so.quests) if (q.hook && q.hookAt && now >= q.hookAt) { fireHook(s, q, q.hookDetail); ch = true; }
+        if (hasStoryProgress()) for (const q of so.quests) if (q.hook && q.hookAt && now >= q.hookAt) { fireHook(s, q, q.hookDetail); ch = true; }
         if (s.pendingDMs?.length) {
             const due = s.pendingDMs.filter((x) => now >= x.at);
             for (const pd of due) if (startDM(s, pd)) { s.pendingDMs = s.pendingDMs.filter((x) => x !== pd); ch = true; }
@@ -1011,12 +1026,18 @@
     /** Новые задания раз в день: генерирует ИИ, без повторов. */
     function refreshQuests(s) {
         const so = soc(s), day = dkey(NOW());
+        if (!hasStoryProgress()) { so.questsPendingOpening = true; return false; }
+        if (mainGenerating) return false;
+        const openingPending = so.questsPendingOpening;
+        if (openingPending) { so.questDay = ''; so.questsPendingOpening = false; }
         if (so.questDay === day) return false;
         so.questDay = day;
-        for (const q of so.quests) if (!q.done && q.k === 'rp') notify(s, `⌛ Задание «${q.t}» так и не выполнено.`, 'social');
+        for (const q of so.quests) if (!openingPending && !q.done && q.k === 'rp') notify(s, `⌛ Задание «${q.t}» так и не выполнено.`, 'social');
         so.quests = [];
         so.questsLoading = true;
         enqueue(s, async () => {
+            if (!hasStoryProgress() || mainGenerating) { so.questDay = ''; so.questsLoading = false; return; }
+            const sourceKey = storyRevision(), epoch = storySyncEpoch;
             const weak = weakSubjects(s);
             const past = so.questHistory.slice(-40);
             const story = recentStory(8), scene = currentScene();
@@ -1039,6 +1060,7 @@ ${Object.entries(QUEST_KINDS).map(([k, v]) => `- ${k}: ${v}`).join('\n')}
 ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story ? `Последние события истории:\n${story}\n` : 'Истории пока нет.\n'}Переписки в CityHub: ${dms || 'нет'}.
 Сюжеты ленты: ${plots || 'нет'}.${loreStudentsLine(s, 8)}
 Формат: [{"k":"rp","title":"название","desc":"что сделать, 1–2 предложения","n":1,"param":"","authority":2,"money":50,"trigger":"post","hook":null}] — n: сколько раз (для rp всегда 1), authority 1–6, money 0–300; trigger нужен только вместе с hook.`);
+            if (S() !== s || !hasStoryProgress() || storySyncEpoch !== epoch || storyRevision() !== sourceKey) { so.questDay = ''; so.questsLoading = false; return; }
             let list = (Array.isArray(r) ? r : []).map((q) => q && makeQuest(q, s)).filter(Boolean).slice(0, 3);
             if (!list.some((q) => q.k === 'rp') || list.length < 3) {
                 const pool = FALLBACK_QUESTS.filter((f) => !past.includes(f.title) && !list.some((q) => q.t === f.title));
@@ -1474,16 +1496,17 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     /** Раз в несколько ответов проверяет, не совершил ли пользователь правонарушение в истории. */
     let crimeBusy = false;
     async function scanCrimes(s) {
-        if (crimeBusy || !cfg().crimeScan || s.expelled) return;
+        if (crimeBusy || !cfg().crimeScan || s.expelled || !hasStoryProgress()) return;
         s.crimeScanAt = (s.crimeScanAt || 0) + 1;
         if (s.crimeScanAt % 3) return;
         crimeBusy = true;
         try {
+            const sourceKey = storyRevision(), epoch = storySyncEpoch;
             const story = recentStory(6);
             if (!story) return;
             const r = await aiJSON(`Последние сообщения истории:\n${story}\n\nСовершил(а) ли ${s.profile.name} в этих сообщениях правонарушение или преступление по законам обычного современного города (вандализм, кража, драка, избиение, угрозы, мошенничество, вождение в нетрезвом виде, убийство и т.п.)? Учитывай только реальные действия ${s.profile.name}, не других персонажей и не шутки. Самооборона и случайности — не правонарушение.
 Формат: {"offense":false} или {"offense":true,"type":"вид правонарушения","desc":"что сделал(а), одной фразой","weight":от 1 (мелкое хулиганство) до 10 (убийство),"caught":вероятность от 0 до 1, что об этом узнает полиция (свидетели, камеры, заявление)}`);
-            if (S() !== s || !r || r.offense !== true) return;
+            if (S() !== s || !hasStoryProgress() || storySyncEpoch !== epoch || storyRevision() !== sourceKey || !r || r.offense !== true) return;
             const key = `${r.type}|${r.desc}`.slice(0, 120);
             if ((s.crimeSeen || []).includes(key)) return;
             (s.crimeSeen ||= []).push(key); if (s.crimeSeen.length > 30) s.crimeSeen.shift();
@@ -1782,13 +1805,13 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     function buildInjection() {
         const s = S();
         if (!s || !s.auth || !cfg().inject) return '';
-        const p = s.profile, g = gpa(s);
+        const p = s.profile, g = gpa(s), opening = !hasStoryProgress();
         const L = [`[CityHub — статус жителя ${p.name}]`];
-        if (s.expelled) L.push(`${p.name} — ОГРАНИЧЕНИЕ СВОБОДЫ (арест или заключение). Причина: ${s.expelReason}. Отрази это в истории: задержание полицией, суд, камера или колония — пока ${p.name} не выйдет на свободу.`);
-        if (gameMode(s)) L.push(`Время истории (часы CityHub): ${fmtFull(s.clock.t)}.`);
+        if (!opening && s.expelled) L.push(`${p.name} — ОГРАНИЧЕНИЕ СВОБОДЫ (арест или заключение). Причина: ${s.expelReason}. Отрази это в истории: задержание полицией, суд, камера или колония — пока ${p.name} не выйдет на свободу.`);
+        if (!opening && gameMode(s)) L.push(`Время истории (часы CityHub): ${fmtFull(s.clock.t)}.`);
         L.push(genderRule(p));
-        L.push(`Возраст: ${AGE_GROUPS[p.age] || '—'}; профессия: ${p.profession || '—'}${isStudent(p) && p.faculty ? ` (${p.faculty}, ${p.year} курс)` : ''}. Рейтинг законопослушности ${rating(s)}%, правонарушений на ${strikeSum(s)}/${cfg().maxStrikes} баллов, баланс ${money(s.wallet.balance)}.`);
-        if (!s.expelled) {
+        L.push(`Возраст: ${AGE_GROUPS[p.age] || '—'}; профессия: ${p.profession || '—'}${isStudent(p) && p.faculty ? ` (${p.faculty}, ${p.year} курс)` : ''}.${opening ? '' : ` Рейтинг законопослушности ${rating(s)}%, правонарушений на ${strikeSum(s)}/${cfg().maxStrikes} баллов, баланс ${money(s.wallet.balance)}.`}`);
+        if (!opening && !s.expelled) {
             const { cur, next } = curNext(s);
             if (cur) {
                 const st = { present: 'на месте', excused: 'отсутствует по уважительной причине', absent: 'не пришёл(ла)', skipped: 'пропускает' }[s.attendance[cur.key]] || 'ещё не отметился(ась)';
@@ -1806,7 +1829,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         }
         // отношения: {{char}} — всегда; остальные — пометки только для рассказчика
         const ctr = s.threads.find((t) => t.kind === 'char');
-        if (ctr && (ctr.status || ctr.msgs.some((m) => m.me) || ctr.conflict)) {
+        if (!opening && ctr && (ctr.status || ctr.msgs.some((m) => m.me) || ctr.conflict)) {
             const lbl = relLabel(ctr);
             let line = `Отношения ${ctr.name} и ${p.name} сейчас: ${lbl}${ctr.relNote ? ` (${ctr.relNote})` : ''}.`;
             if (ctr.conflict) line += ` Они В ССОРЕ — причина: ${ctr.conflict.why}. ${ctr.name} ведёт себя соответственно (обида, холодность, колкости, избегание или выяснение отношений — в характере), пока они не помирятся в истории или в CityHub.`;
@@ -1814,32 +1837,33 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             L.push(line);
         }
         const others = s.threads.filter((t) => t.kind === 'dm' && t.msgs.some((m) => m.me) && (t.conflict || t.beef || (t.rel || 0) >= 50 || ((t.flirt || 0) >= 3 && (t.rel || 0) >= 40))).slice(0, 5);
-        if (others.length) L.push(`Для рассказчика — отношения ${p.name} с другими жителями по CityHub (учитывай, только если этот человек появится в сцене; ${ctr ? ctr.name : 'другие персонажи'} об этом не знает, если не был свидетелем и ему не рассказали): ${others.map((t) => `${t.name} — ${t.conflict || t.beef ? `в ссоре с ${p.name}${t.conflict ? ` (${t.conflict.why})` : ''}` : relLabel(t)}`).join('; ')}.`);
+        if (!opening && others.length) L.push(`Для рассказчика — отношения ${p.name} с другими жителями по CityHub (учитывай, только если этот человек появится в сцене; ${ctr ? ctr.name : 'другие персонажи'} об этом не знает, если не был свидетелем и ему не рассказали): ${others.map((t) => `${t.name} — ${t.conflict || t.beef ? `в ссоре с ${p.name}${t.conflict ? ` (${t.conflict.why})` : ''}` : relLabel(t)}`).join('; ')}.`);
         const beefs = s.threads.filter((t) => t.beef);
-        if (beefs.length) L.push(`Общеизвестно в городе: публичный бифф в CityHub между ${p.name} и ${beefs.map((t) => t.name).join(', ')} — жители это обсуждают, об этом может знать кто угодно.`);
+        if (!opening && beefs.length) L.push(`Общеизвестно в городе: публичный бифф в CityHub между ${p.name} и ${beefs.map((t) => t.name).join(', ')} — жители это обсуждают, об этом может знать кто угодно.`);
         const arriving = s.orders.filter((o) => (o.kind === 'food' || o.kind === 'grocery' || o.kind === 'service') && o.stage !== 'delivered' && (o.dueReply !== undefined ? (s.replyCount || 0) + 1 >= o.dueReply : Date.now() >= o.eta));
         if (arriving.length) {
             for (const o of arriving) o.injected = true;
             L.push(`ДОСТАВКА — ОБЯЗАТЕЛЬНО В ЭТОМ ОТВЕТЕ: ${arriving.map((o) => o.kind === 'service' ? (/такси/i.test(o.title) ? `к ${p.name} подъезжает вызванное через CityHub такси, чтобы отвезти: ${o.details}` : `к ${p.name} приезжает/приходит вызванный через CityHub исполнитель — ${o.title} (${o.details})`) : `курьер CityHub приносит ${p.name} заказ: ${o.kind === 'grocery' ? 'пакет с продуктами — ' : ''}${o.title}${o.place ? ` (из: ${o.place})` : ''}`).join('; ')}. Доставка приходит туда, где ${p.name} находится прямо сейчас по сцене (комната, аудитория, двор, кафе и т.д.): курьер${mundane(s) ? '' : ' или доставщик в духе этого мира'} появляется, называет заказ и передаёт его. Впиши это естественно в текущую сцену, не обрывая её.`);
         }
         const so = soc(s), nowT = NOW();
-        L.push(`Популярность ${p.name} в CityHub (публично видно): уровень ${levelOf(so)}, ${kfmt(so.followers)} подписчиков.${cancelled(s) ? ` Сейчас ${p.name} «отменяют» в сети — многие жители настроены враждебно и обсуждают это.` : ''}`);
+        if (!opening) L.push(`Популярность ${p.name} в CityHub (публично видно): уровень ${levelOf(so)}, ${kfmt(so.followers)} подписчиков.${cancelled(s) ? ` Сейчас ${p.name} «отменяют» в сети — многие жители настроены враждебно и обсуждают это.` : ''}`);
         for (const m of s.meetings) {
             if (m.status === 'started') L.push(`СЕЙЧАС у ${p.name} ${meetText(m)} — договорились через CityHub. Введи эту встречу в повествование в ближайшем ответе (${m.with} ждёт или приходит), если ${p.name} не отменил(а) её словами в чате.`);
             else if (m.status === 'accepted' && m.at - nowT < 36 * HOUR) L.push(`Запланировано через CityHub: ${fmtWhen(m.at)} — ${meetText(m)}. ${p.name} может планировать день с учётом этого.`);
         }
         const rpq = so.quests.filter((q) => q.k === 'rp');
         const openQ = rpq.filter((q) => !q.done), doneQ = rpq.filter((q) => q.done && nowT - q.doneAt < 12 * HOUR);
-        if (openQ.length) L.push(`Задания дня ${p.name} в CityHub: ${openQ.map((q) => `«${q.t}» — ${q.desc}`).join('; ')}. Можешь естественно создавать в истории поводы и ситуации, связанные с ними; не выполняй их за ${p.name}.`);
+        if (!opening && openQ.length) L.push(`Задания дня ${p.name} в CityHub: ${openQ.map((q) => `«${q.t}» — ${q.desc}`).join('; ')}. Можешь естественно создавать в истории поводы и ситуации, связанные с ними; не выполняй их за ${p.name}.`);
         const setups = openQ.filter((q) => q.setup);
-        if (setups.length) L.push(`Предстоящие события (введи их в историю естественно, когда это уместно и не ломает текущую сцену; не всё сразу): ${setups.map((q) => q.setup).join('; ')}.`);
-        if (doneQ.length) L.push(`${p.name} недавно выполнил(а): ${doneQ.map((q) => `«${q.t}»`).join(', ')}. Последствия этого могут проявиться в истории (кто-то заметил, поблагодарил, что-то изменилось).`);
+        if (!opening && setups.length) L.push(`Предстоящие события (введи их в историю естественно, когда это уместно и не ломает текущую сцену; не всё сразу): ${setups.map((q) => q.setup).join('; ')}.`);
+        if (!opening && doneQ.length) L.push(`${p.name} недавно выполнил(а): ${doneQ.map((q) => `«${q.t}»`).join(', ')}. Последствия этого могут проявиться в истории (кто-то заметил, поблагодарил, что-то изменилось).`);
         const ctj = s.threads.find((t) => t.kind === 'char');
-        for (const j of s.jealousy.filter((x) => nowT - x.t < 3 * DAY).slice(-2)) if (ctj) L.push(`${ctj.name} узнал(а), что ${p.name} ходил(а) на свидание с ${j.with} (${j.how}). Отношения ухудшились — ${ctj.name} реагирует в характере: ревность, обида, холодность или выяснение отношений.`);
+        for (const j of s.jealousy.filter((x) => nowT - x.t < 3 * DAY).slice(-2)) if (!opening && ctj) L.push(`${ctj.name} узнал(а), что ${p.name} ходил(а) на свидание с ${j.with} (${j.how}). Отношения ухудшились — ${ctj.name} реагирует в характере: ревность, обида, холодность или выяснение отношений.`);
         const recent = s.notes.filter((n) => (n.type === 'warn' || n.type === 'bad' || n.type === 'important') && Date.now() - n.t < DAY).slice(0, 3);
-        if (recent.length) L.push(`Недавние события: ${recent.map((n) => n.text).join(' | ')}`);
+        if (!opening && recent.length) L.push(`Недавние события: ${recent.map((n) => n.text).join(' | ')}`);
         const rg = reactionGuide(s);
         if (rg) L.push(`Способности: ${abilityInfo(p)}. ${rg}`);
+        if (opening) L.push('Вступление ещё выбирается: профиль CityHub не задаёт место, время, отношения или события начала истории. Определи вступление по карточке, лору и запросу пользователя. Предыдущий вариант вступления при перегенерации не является произошедшим событием.');
         L.push('Это сведения для рассказчика. Персонажи знают только то, что могли узнать сами: увидели, услышали, им рассказали, это касается их лично или официально объявлено. Учитывай это в повествовании (реакции преподавателей, куратора, окружающих, последствия), не пересказывай статус дословно.');
         return L.join('\n');
     }
@@ -2102,6 +2126,12 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         <button class="sh-btn ghost" data-act="dm" data-name="${esc(name)}" data-species="${esc(pr.species)}"><i class="fa-regular fa-paper-plane"></i> Личное сообщение</button></div>
         <h4>Публикации</h4>${posts.length ? posts.map((p) => postHTML(p, s)).join('') : empty('Постов в ленте пока нет.')}`;
     }
+    function dailyQuestsHTML(s) {
+        if (!hasStoryProgress()) return '<p class="sh-muted">Задания появятся после вашего ответа на выбранное вступление в основном чате.</p>';
+        const so = soc(s);
+        if (so.questsLoading && !so.quests.length) return '<p class="sh-muted"><i class="fa-solid fa-spinner fa-spin"></i> Придумываю задания…</p>';
+        return so.quests.length ? so.quests.map((q) => questHTML(q)).join('') : '<p class="sh-muted">Задания появятся в течение минуты.</p>';
+    }
     function questHTML(q) {
         const rw = [q.r.authority ? `⭐ +${q.r.authority}` : '', q.r.money ? money(q.r.money) : ''].filter(Boolean).join(' · ');
         return `<div class="sh-quest ${q.done ? 'done' : ''}"><i class="fa-solid ${q.done ? 'fa-circle-check' : q.k === 'rp' ? 'fa-book-open' : 'fa-mobile-screen'}"></i>
@@ -2119,8 +2149,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
           <small>Хейт: ${hate}%${hate >= 50 ? ' — осторожно, при 70% вас «отменят»' : ''}</small><div class="sh-bar"><span class="${hate >= 50 ? 'bad' : hate >= 25 ? 'warn' : ''}" style="width:${hate}%"></span></div>
           ${PERKS[lv + 1] ? `<small>На уровне ${lv + 1}: ${PERKS[lv + 1]}</small>` : ''}
         </div>
-        <div class="sh-card"><h4>Задания дня</h4>${so.questsLoading && !so.quests.length ? '<p class="sh-muted"><i class="fa-solid fa-spinner fa-spin"></i> Придумываю задания…</p>' : so.quests.length ? so.quests.map((q) => questHTML(q)).join('') : '<p class="sh-muted">Задания появятся в течение минуты.</p>'}
-          ${so.rerollDay !== dkey(NOW()) && so.quests.length ? '<button class="sh-link" data-act="rerollQuests"><i class="fa-solid fa-rotate"></i> Заменить задания (раз в день)</button>' : ''}</div>`;
+        <div class="sh-card"><h4>Задания дня</h4>${dailyQuestsHTML(s)}
+          ${hasStoryProgress() && so.rerollDay !== dkey(NOW()) && so.quests.length ? '<button class="sh-link" data-act="rerollQuests"><i class="fa-solid fa-rotate"></i> Заменить задания (раз в день)</button>' : ''}</div>`;
     }
     function meView(s) {
         const posts = s.feed.filter((p) => p.mine);
@@ -2277,7 +2307,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const done = s.tasks.filter((t) => t.done || t.expired).sort((a, b) => (b.doneAt || b.deadline) - (a.doneAt || a.deadline)).slice(0, 20);
         const hasExtra = pend.some((t) => t.extra);
         const so = soc(s);
-        return `<div class="sh-card"><h4>Задания дня</h4>${so.quests.length ? so.quests.map((q) => questHTML(q)).join('') : '<p class="sh-muted">Задания появятся в течение минуты.</p>'}</div>
+        return `<div class="sh-card"><h4>Задания дня</h4>${dailyQuestsHTML(s)}</div>
         <div class="sh-note"><i class="fa-solid fa-circle-info"></i> Поручения приходят после смен и занятий. Не выполнено вовремя — замечание и удержание из дохода. Сверху — задания дня под вашу жизнь и профессию.</div>
         <h4>Поручения и задания</h4>${pend.length ? pend.map(taskRow).join('') : empty('Все задания сданы.')}
         <button class="sh-btn ghost wide" data-act="extra" ${hasExtra ? 'disabled' : ''}><i class="fa-solid fa-star"></i> ${hasExtra ? 'Доп. задание уже взято' : 'Взять подработку'}</button>
@@ -2664,7 +2694,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.13 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.14 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
