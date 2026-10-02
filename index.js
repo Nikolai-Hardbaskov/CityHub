@@ -548,9 +548,9 @@
         return out.join('\n');
     }
     /** Вступление закрепляется только после ответа пользователя на него. */
-    function hasStoryProgress() {
+    function hasStoryProgress(chat = ctx().chat || []) {
         let opening = false;
-        for (const m of ctx().chat || []) {
+        for (const m of chat) {
             if (!m || m.is_system) continue;
             const text = String(m.mes || '')
                 .replace(/<think(?:ing)?\b[^>]*>[\s\S]*?(<\/think(?:ing)?>|$)/gi, '')
@@ -1152,10 +1152,10 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         th.rel = clamp(before + clamp(Math.round(delta), -maxStep, maxStep), -100, 100);
         // запоминаем причину конфликта и момент примирения
         if (why && (delta <= -4 || th.rel <= -20)) {
-            if (!th.conflict) th.conflict = { why: String(why).slice(0, 220), t: NOW(), low: th.rel };
+            if (!th.conflict) th.conflict = { why: String(why).slice(0, 220), t: NOW(), low: th.rel, source: 'dm' };
             else th.conflict.low = Math.min(th.conflict.low ?? th.rel, th.rel);
         }
-        if (th.conflict && delta > 0 && th.rel >= (th.conflict.low ?? th.rel) + 15 && th.rel > -40) { th.reconciled = { why: th.conflict.why, t: NOW() }; th.conflict = null; notify(s, `🕊️ Вы с ${th.name} помирились.`, 'social', { view: 'thread', param: th.id }); }
+        if (th.conflict && delta > 0 && th.rel >= (th.conflict.low ?? th.rel) + 15 && th.rel > -40) { th.reconciled = { why: th.conflict.why, t: NOW(), source: 'dm' }; th.conflict = null; notify(s, `🕊️ Вы с ${th.name} помирились.`, 'social', { view: 'thread', param: th.id }); }
         if (flirt) th.flirt = (th.flirt || 0) + 1; else if (th.flirt) th.flirt = Math.max(0, th.flirt - 0.25);
         if (before < 50 && th.rel >= 50) { notify(s, `🤝 Вы с ${th.name} теперь друзья`, 'social', { view: 'thread', param: th.id }); questEvent(s, 'friend'); }
         if (!th.beef && th.rel <= -60 && th.kind !== 'char') {
@@ -1186,6 +1186,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         if (th.relSyncing) return;
         const revision = storyRevision(), epoch = storySyncEpoch;
         const dmRevision = hash(JSON.stringify(th.msgs));
+        const opening = !hasStoryProgress();
+        const previousAccepted = th.relStoryAccepted ?? hasStoryProgress((ctx().chat || []).slice(0, th.relSyncLen || 0));
         th.relSyncing = true; render();
         try {
             const c = ctx(), ch = c.characters?.[c.characterId];
@@ -1200,14 +1202,23 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             th.known = r.known !== false;
             th.rel = clamp(Math.round(+r.rel || 0), -100, 100);
             th.relAtSync = th.rel;
-            if (th.rel > -10 && th.conflict) { th.reconciled = { why: th.conflict.why, t: NOW() }; th.conflict = null; }
-            if (th.rel <= -20 && !th.conflict) th.conflict = { why: cleanMsg(r.note || 'конфликт в истории').slice(0, 220), t: NOW(), low: th.rel };
+            // Оценка вступления — предварительная: без ссор, примирений и смены статуса пары.
+            if (!opening) {
+                if (!previousAccepted) {
+                    if (th.conflict?.source !== 'dm') th.conflict = null;
+                    if (th.reconciled?.source !== 'dm') th.reconciled = null;
+                }
+                if (th.rel > -10 && th.conflict) { th.reconciled = { why: th.conflict.why, t: NOW(), source: 'story' }; th.conflict = null; }
+                if (th.rel <= -20) th.conflict = { t: NOW(), low: th.rel, ...th.conflict,
+                    why: cleanMsg(r.note || 'конфликт в истории').slice(0, 220), source: 'story' };
+            }
             th.status = th.known ? cleanMsg(r.status || '').slice(0, 30).toLowerCase() : 'не знакомы';
             th.relNote = cleanMsg(r.note || '').slice(0, 200);
             th.pair = r.pair === true || r.pair === 'true';
             th.relSyncLen = (ctx().chat || []).length;
             th.relStoryRevision = revision;
-            if (th.kind === 'char' && th.pair !== !!s.profile.relWithChar) {
+            th.relStoryAccepted = !opening;
+            if (!opening && th.kind === 'char' && th.pair !== !!s.profile.relWithChar) {
                 s.profile.relWithChar = th.pair;
                 notify(s, th.pair ? `💞 По истории вы с ${th.name} — пара. Отмечено в профиле.` : `По истории вы с ${th.name} сейчас не пара. Отметка в профиле снята.`, 'social');
             }
@@ -2694,7 +2705,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.14 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.15 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
