@@ -1296,7 +1296,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         for (const t of s.threads || []) for (const m of t.msgs || []) st(m);
         for (const n of s.notes || []) st(n);
     }
-    const fmtFull = (ts) => new Date(ts).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    const fmtFull = (ts) => new Date(ts).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     /** Двигает часы истории. back=true — ручная установка или исправление источника времени. */
     function setClock(s, ts, source, back = false) {
         if (!gameMode(s) || !Number.isFinite(ts)) return false;
@@ -1312,56 +1312,134 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     }
     function nextMorning(ts) { const d = new Date(ts); if (d.getHours() >= 5) d.setDate(d.getDate() + 1); d.setHours(7, 30, 0, 0); return d.getTime(); }
 
-    /** Разбор строки с датой/временем. base — текущее время истории. */
-    function parseStoryTime(str, base) {
-        str = String(str || '');
-        const tm = /(\d{1,2})[:.](\d{2})(?!\d)/.exec(str.replace(/\d{4}-\d{2}-\d{2}/, ' '));
-        if (!tm) return null;
-        const hh = +tm[1], mi = +tm[2];
-        if (hh > 23 || mi > 59) return null;
-        const d = new Date(base);
-        let dated = false;
-        let m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(str);
-        if (m) { d.setFullYear(+m[1], +m[2] - 1, +m[3]); dated = true; }
-        else if ((m = /(\d{1,2})\.(\d{1,2})\.(\d{2,4})/.exec(str))) { d.setFullYear(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[2] - 1, +m[1]); dated = true; }
-        else if ((m = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(str))) { d.setFullYear(+m[3], +m[1] - 1, +m[2]); dated = true; }
-        d.setHours(hh, mi, 0, 0);
-        let ts = d.getTime();
-        if (!dated && ts < base - 2 * HOUR) ts += DAY;
-        return ts;
-    }
-    /** Ищет время истории, которое хранит расширение Horae (метаданные чата, данные сообщения или теги в тексте). */
-    function readHorae(dump) {
-        const c = ctx(), found = [];
-        const KEY = /horae/i, TKEY = /(date|time|clock|datetime|timestamp|时间|日期|время|дата)/i;
-        const walk = (o, path, depth) => {
-            if (!o || depth > 5) return;
-            if (typeof o !== 'object') return;
-            for (const [k, v] of Object.entries(o)) {
-                const p = `${path}.${k}`;
-                if (typeof v === 'string' || typeof v === 'number') { if (TKEY.test(k)) found.push([p, String(v)]); }
-                else walk(v, p, depth + 1);
-            }
-        };
-        const md = c.chatMetadata || {};
-        for (const k of Object.keys(md)) if (KEY.test(k)) walk(md[k], `chatMetadata.${k}`, 0);
-        const chat = c.chat || [];
-        for (let i = chat.length - 1, n = 0; i >= 0 && n < 3; i--, n++) {
-            const m = chat[i];
-            if (!m) continue;
-            for (const k of Object.keys(m)) if (KEY.test(k)) walk(m[k], `chat[${i}].${k}`, 0);
-            for (const k of Object.keys(m.extra || {})) if (KEY.test(k)) walk(m.extra[k], `chat[${i}].extra.${k}`, 0);
-            const raw = String(m.mes || '');
-            const tag = /<horae[^>]*>([\s\S]*?)<\/horae>/i.exec(raw);
-            if (tag) {
-                const line = tag[1].split('\n').find((l) => TKEY.test(l)) || tag[1];
-                found.push([`chat[${i}].mes<horae>`, line.trim()]);
-            }
+    /** Григорианская дата истории; неполные даты используют год часов CityHub. */
+    function storyDateParts(str, base) {
+        str = String(str || '').trim();
+        const b = new Date(base);
+        if (!str) return [b.getFullYear(), b.getMonth() + 1, b.getDate()];
+        let m, parts;
+        if ((m = /(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(str))) parts = [+m[1], +m[2], +m[3]];
+        else if ((m = /(\d{1,2})\.(\d{1,2})\.(\d{2,4})/.exec(str))) parts = [+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[2], +m[1]];
+        else if ((m = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(str))) parts = [+m[3], +m[1], +m[2]];
+        else if ((m = /(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?/.exec(str))) parts = [+m[1], +m[2], +m[3]];
+        else if ((m = /(?:^|\s)(\d{1,2})[/-](\d{1,2})(?![/-]\d)(?:\s|$|\()/.exec(str))) parts = [b.getFullYear(), +m[1], +m[2]];
+        else if ((m = /(?:^|\s)(\d{1,2})\.(\d{1,2})(?!\.\d)(?:\s|$)/.exec(str))) parts = [b.getFullYear(), +m[2], +m[1]];
+        else if ((m = /(\d{1,2})月\s*(\d{1,2})日?/.exec(str))) parts = [b.getFullYear(), +m[1], +m[2]];
+        else {
+            const months = ['январ', 'феврал', 'март', 'апрел', 'ма[йя]', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр'];
+            m = /(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?/i.exec(str);
+            const month = m ? months.findIndex((v) => new RegExp('^' + v, 'i').test(m[2])) : -1;
+            if (month >= 0) parts = [m[3] ? +m[3] : b.getFullYear(), month + 1, +m[1]];
         }
-        if (dump) return found;
-        const base = gameMode(S()) ? S().clock.t : Date.now();
-        for (const [, v] of found) { const ts = parseStoryTime(v, base); if (ts) return ts; }
+        if (!parts || parts[1] < 1 || parts[1] > 12 || parts[2] < 1 || parts[2] > 31) return null;
+        const d = new Date(0); d.setFullYear(parts[0], parts[1] - 1, parts[2]); d.setHours(12, 0, 0, 0);
+        return d.getFullYear() === parts[0] && d.getMonth() + 1 === parts[1] && d.getDate() === parts[2] ? parts : null;
+    }
+    /** Дата и время разбираются вместе: дата с точками не может стать часами. */
+    function parseClockStamp(date, time, base) {
+        time = String(time || '').trim().replace(/：/g, ':');
+        const tm = /(?:^|[^\d])(\d{1,2}):(\d{2})(?!\d)\s*(am|pm)?/i.exec(time)
+            || /^(\d{1,2})\.(\d{2})$/.exec(time);
+        if (!tm) return null;
+        let hh = +tm[1]; const mi = +tm[2];
+        if (tm[3]) { if (hh < 1 || hh > 12) return null; hh = hh % 12 + (tm[3].toLowerCase() === 'pm' ? 12 : 0); }
+        if (hh > 23 || mi > 59) return null;
+        const prefix = time.slice(0, tm.index).replace(/^(?:time|datetime|время|дата|日期|时间)\s*[:：]\s*/i, '').trim();
+        const parts = storyDateParts(date || prefix, base);
+        if (!parts) return null;
+        const d = new Date(0); d.setFullYear(parts[0], parts[1] - 1, parts[2]); d.setHours(hh, mi, 0, 0);
+        return d.getTime();
+    }
+    function parseStoryTime(str, base) { return parseClockStamp('', str, base); }
+
+    /** Чтение документированного API Horae и метаданных её реального формата. */
+    function horaeClockCandidates() {
+        const found = [], c = ctx();
+        const dateKeys = ['story_date', 'date', '日期', 'дата'];
+        const timeKeys = ['story_time', 'time', 'datetime', 'clock', '时间', 'время'];
+        const stamp = (o) => {
+            if (!o || typeof o !== 'object') return null;
+            const date = dateKeys.map((k) => o[k]).find((v) => typeof v === 'string' && v.trim());
+            const time = timeKeys.map((k) => o[k]).find((v) => typeof v === 'string' && v.trim());
+            return date || time ? { date: date || '', time: time || '' } : null;
+        };
+        const add = (source, value) => { if (value?.time) found.push({ source, ...value }); };
+        try {
+            const api = window.Horae;
+            if (api?.isEnabled && !api.isEnabled()) return [];
+            if (typeof api?.getLatestState === 'function') {
+                const state = api.getLatestState();
+                add('window.Horae.getLatestState', stamp(state?.timestamp) || stamp(state));
+            }
+        } catch (e) { logErr('Чтение Horae API', e); }
+        let merged = { date: '', time: '' };
+        const merge = (value) => {
+            if (value?.date) merged.date = value.date;
+            if (value?.time) merged.time = value.time;
+        };
+        const walk = (o, depth = 0) => {
+            if (!o || typeof o !== 'object' || depth > 5 || o._skipHorae) return;
+            const own = stamp(o.timestamp) || stamp(o);
+            if (own) { merge(own); return; }
+            for (const v of Object.values(o)) if (typeof v === 'object') walk(v, depth + 1);
+        };
+        for (const [key, value] of Object.entries(c.chatMetadata || {})) if (/horae/i.test(key)) walk(value);
+        const metadata = { ...merged };
+        merged = { date: '', time: '' };
+        const chat = c.chat || [];
+        // Horae хранит отдельные изменения: дата могла быть указана десятки сообщений назад.
+        for (const m of chat) {
+            if (!m || m.horae_meta?._skipHorae) continue;
+            let hasMeta = false;
+            for (const root of [m, m.extra || {}]) {
+                for (const [key, value] of Object.entries(root)) if (/horae/i.test(key) && value && !value._skipHorae) {
+                    walk(value); hasMeta = true;
+                }
+            }
+            if (hasMeta) continue;
+            const tag = /<horae\b[^>]*>([\s\S]*?)<\/horae>/i.exec(String(m.mes || ''));
+            if (!tag) continue;
+            const body = tag[1];
+            const combined = /^\s*(?:time|datetime|время|时间)\s*[:：]\s*(.+)$/im.exec(body);
+            if (combined) {
+                const t = /(?:^|[^\d])(\d{1,2}[:：]\d{2})(?:\s*(?:am|pm))?\s*$/i.exec(combined[1]);
+                if (t) {
+                    const date = combined[1].slice(0, t.index).trim();
+                    merge({ date, time: t[0].trim() });
+                }
+            }
+            const dateLine = /^\s*(?:date|дата|日期)\s*[:：]\s*(.+)$/im.exec(body);
+            if (dateLine) merge({ date: dateLine[1].trim() });
+        }
+        add('chat.horae_meta.timestamp', merged);
+        add('chatMetadata.horae', metadata);
+        return found;
+    }
+    function readHorae(dump) {
+        const found = horaeClockCandidates();
+        if (dump) return found.map((x) => [x.source, [x.date, x.time].filter(Boolean).join(' ')]);
+        const s = S(), base = gameMode(s) ? s.clock.t : Date.now();
+        for (const x of found) { const ts = parseClockStamp(x.date, x.time, base); if (Number.isFinite(ts)) return ts; }
         return null;
+    }
+    /** Явная шапка текущей сцены основного чата; время встречи в обычном тексте сюда не попадает. */
+    function readStoryClock() {
+        const chat = ctx().chat || [], s = S();
+        let date = '', time = '', source = -1;
+        for (let i = 0; i < chat.length; i++) {
+            const m = chat[i];
+            if (!m || m.is_user || m.is_system) continue;
+            const text = String(m.mes || '').replace(/<horae\b[^>]*>[\s\S]*?<\/horae>/gi, '');
+            const dm = /(?:^|\n)\s*[*#\s\[]*(?:date|дата)\s*[:：]\s*([^\n\]]+)/im.exec(text);
+            const tm = /(?:^|\n)\s*[*#\s\[]*(?:time|время|текущее время)\s*[:：]\s*([^\n\]]+)/im.exec(text);
+            if (dm) date = dm[1].replace(/\*/g, '').trim();
+            if (tm) { time = tm[1].replace(/\*/g, '').trim(); source = i; }
+            // Если новая сцена не указывает время, более ранняя шапка не блокирует оценку ИИ.
+            else if (String(m.mes || '').trim()) { time = ''; source = -1; }
+        }
+        if (!time) return null;
+        const ts = parseClockStamp(date, time, s?.clock?.t || Date.now());
+        return Number.isFinite(ts) ? { ts, key: JSON.stringify([source, date, time]) } : null;
     }
     /** Раз в несколько ответов проверяет, не совершил ли пользователь правонарушение в истории. */
     let crimeBusy = false;
@@ -1404,9 +1482,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         if (!current()) return;
         const records = s.storyClockHistory ||= [];
         const previous = records.find((x) => x.id === snapshot.id || x.index === snapshot.index);
-        if (previous?.key === snapshot.key) return;
+        if (previous?.key === snapshot.key && !snapshot.align) return;
         // Правка уже обработанного ответа заменяет его шаг, если часы с тех пор не менялись.
-        if (previous && s.clock.t !== previous.after) return;
+        if (previous && !snapshot.align && s.clock.t !== previous.after) return;
         const base = previous ? previous.before : s.clock.t;
         const clockAtStart = s.clock.t;
         const remember = () => {
@@ -1416,14 +1494,25 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (records.length > 40) records.splice(0, records.length - 40);
             save(s);
         };
-        if (syncHoraeClock(s)) { remember(); return; }
+        if (syncStoryClock(s)) { remember(); return; }
         const c = cfg();
+        if (snapshot.align) {
+            const revision = storyRevision();
+            const r = await aiJSON(`Последние события основной истории:\n${recentStory(12)}\n\nОпредели ТЕКУЩИЕ дату и время сцены, а не время встречи или воспоминания. Не отсчитывай минуты от часов телефона и не придумывай отсутствующие сведения. Если текущие часы не указаны явно — explicit:false.\nФормат: {"explicit":true,"date":"ГГГГ-ММ-ДД если дата явно известна, иначе null","time":"ЧЧ:ММ"}`);
+            if (!current() || revision !== storyRevision()) return;
+            if (!syncStoryClock(s) && s.clock.t === clockAtStart && r?.explicit === true) {
+                const ts = parseClockStamp(r.date, r.time, base);
+                if (Number.isFinite(ts) && ts !== s.clock.t) setClock(s, ts, 'ИИ: текущая сцена', true);
+            }
+            s.storyAlignedKey = `${snapshot.id}:${snapshot.key}`;
+            remember(); return;
+        }
         if (c.syncAI) {
             const text = String(snapshot.message.mes || '').replace(/<[^>]+>/g, ' ').slice(-2500);
-            const r = await aiJSON(`Часы истории перед этим ответом: ${fmtFull(base)}.\nНовое сообщение истории:\n${text}\n\nОпредели, сколько времени прошло в истории за это сообщение. Если в тексте явно названо время или переход («наступило утро», «через час», «в 18:00», «на следующий день») — учти это. Обычный диалог без переходов — 1–15 минут.\nФормат: {"minutes":число прошедших минут от 0 до 1440,"time":"ЧЧ:ММ если текст явно называет текущее время, иначе null","nextDay":true если явно наступил следующий день}`);
+            const r = await aiJSON(`Часы истории перед этим ответом: ${fmtFull(base)}.\nНовое сообщение истории:\n${text}\n\nОпредели, сколько времени прошло в истории за это сообщение. Если в тексте явно названы текущие дата/время или переход («наступило утро», «через час», «в 18:00», «на следующий день») — учти это. Время будущей встречи и воспоминания не являются текущим временем. Обычный диалог без переходов — 1–15 минут.\nФормат: {"minutes":число прошедших минут от 0 до 1440,"date":"ГГГГ-ММ-ДД только если текущая дата явно названа, иначе null","time":"ЧЧ:ММ если текст явно называет текущее время, иначе null","nextDay":true если явно наступил следующий день}`);
             if (!current()) return;
             // Horae мог обновиться позже ответа или пользователь мог выставить время вручную.
-            if (syncHoraeClock(s)) { remember(); return; }
+            if (syncStoryClock(s)) { remember(); return; }
             if (s.clock.t !== clockAtStart) return;
             if (r && typeof r === 'object') {
                 let ts = base + clamp(Math.round(+r.minutes || 0), 0, 1440) * MIN;
@@ -1434,7 +1523,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                     let t2 = d.getTime(); if (t2 < base) t2 += DAY;
                     ts = t2;
                 } else if (r.nextDay === true && ts < nextMorning(base) - 2 * HOUR) ts = nextMorning(base);
-                if (ts !== s.clock.t) setClock(s, ts, 'ИИ по тексту', !!previous);
+                const dated = r.date && parseClockStamp(r.date, r.time, base);
+                if (Number.isFinite(dated)) ts = dated;
+                if (ts !== s.clock.t) setClock(s, ts, 'ИИ по тексту', !!previous || Number.isFinite(dated));
                 remember();
                 return;
             }
@@ -1471,16 +1562,29 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     /** Проверяется независимо от окна CityHub; одинаковое значение не прибавляет сутки. */
     function syncHoraeClock(s) {
         if (!gameMode(s) || !cfg().syncHorae) return false;
-        const found = readHorae(true);
-        if (!found.length) return false;
-        const key = JSON.stringify(found);
-        if (s.storyHoraeKey === key) return !!s.storyHoraeValid;
-        const ts = readHorae();
-        s.storyHoraeKey = key;
-        s.storyHoraeValid = Number.isFinite(ts) && ts > 0;
-        if (s.storyHoraeValid && ts !== s.clock.t) setClock(s, ts, 'Horae', true);
-        save(s);
-        return s.storyHoraeValid;
+        for (const value of horaeClockCandidates()) {
+            const key = JSON.stringify(value);
+            const ts = s.storyHoraeKey === key && Number.isFinite(s.storyHoraeTime)
+                ? s.storyHoraeTime : parseClockStamp(value.date, value.time, s.clock.t);
+            if (!Number.isFinite(ts)) continue;
+            const changed = s.storyHoraeKey !== key || s.storyHoraeTime !== ts || !s.storyHoraeValid;
+            s.storyHoraeKey = key; s.storyHoraeTime = ts; s.storyHoraeValid = true;
+            if (ts !== s.clock.t) setClock(s, ts, 'Horae', true);
+            else if (changed) save(s);
+            return true;
+        }
+        if (s.storyHoraeValid) { s.storyHoraeValid = false; save(s); }
+        return false;
+    }
+    function syncStoryClock(s) {
+        if (syncHoraeClock(s)) return true;
+        if (!gameMode(s)) return false;
+        const value = readStoryClock();
+        if (!value) return false;
+        const ts = s.storyHeaderKey === value.key && Number.isFinite(s.storyHeaderTime) ? s.storyHeaderTime : value.ts;
+        s.storyHeaderKey = value.key; s.storyHeaderTime = ts;
+        if (ts !== s.clock.t) setClock(s, ts, 'время в основном чате', true);
+        return true;
     }
     function queueStorySync(s, session) {
         if (session.queued || mainGenerating || cityAIActive) return;
@@ -1535,7 +1639,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 save(s);
             }
         }
-        syncHoraeClock(s);
+        const anchored = syncStoryClock(s);
         let index = Number.isInteger(receivedId) ? receivedId : chat.length - 1;
         while (index >= 0 && (!chat[index] || chat[index].is_user || chat[index].is_system)) index--;
         const message = chat[index];
@@ -1550,6 +1654,10 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             } else if (received || ((changed || first) && previous?.key !== key)) {
                 const pending = session.replies.get(id);
                 session.replies.set(id, { index, message, id, key, received: received || !!pending?.received });
+            }
+            if (first && !anchored && gameMode(s) && cfg().syncAI && s.storyAlignedKey !== `${id}:${key}`) {
+                const pending = session.replies.get(id);
+                if (!pending?.received) session.replies.set(id, { index, message, id, key, received: false, align: true });
             }
         }
         // Новая переписка с персонажем тоже получает отношения, даже при закрытом окне.
@@ -2254,7 +2362,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
           <label class="sh-toggle"><input type="checkbox" data-change="cfgBool" data-k="syncAI" ${c.syncAI ? 'checked' : ''}><span>ИИ определяет время по тексту</span></label>
           <label>Если оба выключены или не сработали — минут за каждый ответ истории<input type="number" min="0" max="120" data-change="cfg" data-k="stepMin" value="${esc(c.stepMin)}"></label>
           <button class="sh-btn sm ghost" data-act="checkHorae"><i class="fa-solid fa-link"></i> Проверить связь с Horae</button>
-          <small>Часы идут только вперёд и только когда движется история. Пока вы не играете, пары и дедлайны не наступают.</small></div>`
+          <small>Источник времени: Horae → явные дата и время текущей сцены → оценка ИИ → шаг за ответ. Синхронизация может исправлять дату и переводить часы назад. Нестандартные календари и время без точных часов не всегда можно перевести в дату CityHub. Пока история стоит, игровое время само не идёт.</small></div>`
         : '<div class="sh-note"><i class="fa-solid fa-clock"></i><span>Пары, дедлайны, встречи и задания идут по часам телефона. Подходит, если вы играете синхронно с реальным временем.</span></div>'}`;
     }
     function moreTab(s) {
@@ -2524,7 +2632,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.11 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.12 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -3073,10 +3181,10 @@ ${story}
         },
         checkHorae: () => {
             const found = readHorae(true);
-            if (!found.length) { logErr('Horae', 'данные о времени не найдены (метаданные чата, последние 3 сообщения, теги <horae>)'); return toast('warning', 'Время от Horae не найдено. Подробности — в журнале ошибок; пришлите его, и я подстрою связку.'); }
+            if (!found.length) { logErr('Horae', 'данные о времени не найдены: window.Horae.getLatestState(), horae_meta.timestamp, метаданные чата и теги <horae>'); return toast('warning', 'В Horae не найдено время текущей сцены. Проверьте, что Horae включено и в её текущем состоянии указаны дата и часы.'); }
             logErr('Horae: найдено', found.slice(0, 12).map(([p, v]) => `${p} = ${v}`).join(' | '));
             const ts = readHorae();
-            toast(ts ? 'success' : 'warning', ts ? `Horae найден: ${fmtFull(ts)}` : 'Horae найден, но время не удалось разобрать. Пришлите журнал ошибок.');
+            toast(Number.isFinite(ts) ? 'success' : 'warning', Number.isFinite(ts) ? `Horae найден: ${fmtFull(ts)}` : 'Данные Horae найдены, но их дата/время не поддерживаются. Для точной синхронизации нужны обычная дата и время ЧЧ:ММ.');
         },
         goClass: (d, el, s) => {
             const o = findOcc(s, d.key);
@@ -3790,8 +3898,22 @@ ${story ? `Последние события истории:\n${story}\nЕсли
                 scheduleStorySync();
             });
         }
+        const onHoraeChanged = () => {
+            try {
+                const s = S();
+                if (s && s.auth && !mainGenerating) { syncStoryClock(s); updateInjection(); }
+                scheduleStorySync();
+            } catch (e) { logErr('Обновление времени Horae', e); }
+        };
+        eventSource.on('horae:settingsChanged', onHoraeChanged);
+        eventSource.on('horae:portsChanged', onHoraeChanged);
+        window.addEventListener('horae:portsChanged', onHoraeChanged);
         // Резервная проверка для обновлений метаданных другими расширениями (например, Horae).
-        setInterval(() => { if (!mainGenerating && !cityAIActive) scheduleStorySync(); }, 5000);
+        setInterval(() => {
+            try { const s = S(); if (s?.auth && !mainGenerating) syncStoryClock(s); }
+            catch (e) { logErr('Проверка времени', e); }
+            if (!mainGenerating && !cityAIActive) scheduleStorySync();
+        }, 5000);
         setInterval(() => {
             try { tick(); } catch (e) { logErr('Таймер', e); }
             updateInjection();
