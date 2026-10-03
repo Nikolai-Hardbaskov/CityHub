@@ -338,7 +338,7 @@
             tasks: [], strikes: [], grades: [],
             quarter: { n: 1, start: now }, lowGpaSince: 0, expelled: false, expelReason: '',
             wallet: { balance: cfg().startBalance, history: [], lastStipend: now },
-            feed: [], threads: [], social: { followers: 40 + Math.floor(Math.random() * 60), following: [], seed: 0 },
+            feed: [], threads: [], npcVoices: [], social: { followers: 40 + Math.floor(Math.random() * 60), following: [], seed: 0 },
             dating: { mode: 'love', profiles: [], matches: [], fSpecies: '', fAbility: '', fGender: '' },
             menu: MUNDANE_MENU.map((x) => ({ ...x, id: uid() })), orders: [],
             market: MUNDANE_MARKET.map((x) => ({ ...x, id: uid() })), listings: [], inventory: [], world: 'mundane',
@@ -412,6 +412,7 @@
         for (const st of s.stories || []) for (const n of st.cast || []) add(n);
         for (const o of s.orders || []) if (o.kind === 'parcel') add(o.to);
         for (const p of s.personAliases || []) add(p.name, 1.5, p.aliases || []);
+        for (const p of s.npcVoices || []) add(p.name, 4.5);
         for (const n of Array.isArray(extra) ? extra : [extra]) add(n, 7);
         return out;
     }
@@ -525,6 +526,13 @@
             return [...map.values()];
         };
         s.lorePeople = dedup(s.lorePeople);
+        // Keep the first assigned voice when spelling variants of one person merge.
+        const voices = new Map();
+        for (const p of [...(s.npcVoices || [])].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) {
+            rename(p, 'name');
+            if (!voices.has(p.name)) voices.set(p.name, p);
+        }
+        s.npcVoices = [...voices.values()];
         if (s.dating) { s.dating.matches = dedup(s.dating.matches); s.dating.profiles = dedup(s.dating.profiles); }
         const threads = new Map(), redirects = new Map();
         let deferred = false;
@@ -887,7 +895,7 @@
                 k = String(k).trim().toLowerCase();
                 return k.length > 1 && (exactKeys ? new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRE(k)}([^\\p{L}\\p{N}]|$)`, 'u').test(low) : low.includes(k));
             });
-            if (hit) out.push(macros(content));
+            if (hit) out.push(full && exactKeys ? `Запись лора (${(keys || []).join(', ') || 'постоянная запись'}):\n${macros(content)}` : macros(content));
         };
         for (const name of books) {
             try {
@@ -1459,7 +1467,11 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         so.followers -= lost;
         notify(s, `🚫 Вас «отменили» в CityHub! −${kfmt(lost)} подписчиков, охваты рухнули на сутки.`, 'bad');
         enqueue(s, async () => {
-            const r = await aiJSON(`${world(s)}\n\nПользователи CityHub устроили травлю ${s.profile.name} за спорные посты и комментарии. Сгенерируй 2 поста разных жителей об этой «отмене»: возмущение, мемы, кто-то заступается. Всё на русском.\nФормат: [{"author":"","species":"","text":"до 250 символов"}]`);
+            const voices = await voiceContext(s, [...s.npcVoices.map((p) => p.name), ...s.lorePeople.map((p) => p.name)]);
+            if (S() !== s) return;
+            const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\n\nПользователи CityHub устроили травлю ${s.profile.name} за спорные посты и комментарии. Сгенерируй 2 поста разных жителей об этой «отмене»: возмущение, мемы, кто-то заступается. Всё на русском.\nФормат: [{"author":"","species":"","text":"до 250 символов","voice":null}]`);
+            if (S() !== s) return;
+            rememberNpcVoices(s, (Array.isArray(r) ? r : []).filter((p) => p && p.author && p.text));
             for (const x of Array.isArray(r) ? r : []) if (x && x.author && x.text) s.feed.unshift({ id: uid(), author: cleanName(x.author), species: SP(s, x.species), channel: 'general', text: cleanMsg(x.text).slice(0, 500), likes: 50 + Math.floor(Math.random() * 500), t: Date.now(), comments: [], story: `Отмена ${s.profile.name}` });
         });
     }
@@ -1516,11 +1528,16 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         if (before < 50 && th.rel >= 50) { notify(s, `🤝 Вы с ${th.name} теперь друзья`, 'social', { view: 'thread', param: th.id }); questEvent(s, 'friend'); }
         if (!th.beef && th.rel <= -60 && th.kind !== 'char') {
             th.beef = true;
-            soc(s).hate = clamp(soc(s).hate + 10, 0, 100);
-            notify(s, `⚔️ Бифф с ${th.name}! Конфликт выплеснулся в ленту.`, 'warn', { view: 'thread', param: th.id });
             enqueue(s, async () => {
-                const x = await aiJSON(`${world(s)}\n\n${th.name}${th.species ? ` (${th.species})` : ''} поссорился(ась) с ${s.profile.name} в личке и выносит конфликт в ленту CityHub: язвительный пост-наезд или прозрачный намёк. Последние сообщения:\n${th.msgs.slice(-6).map((m) => `${m.me ? s.profile.name : th.name}: ${m.text}`).join('\n')}\nФормат: {"text":"до 280 символов","media":"пусто или описание скриншота переписки"}`);
-                if (x?.text) s.feed.unshift({ id: uid(), author: th.name, species: th.species || '', channel: 'general', text: cleanMsg(x.text).slice(0, 500), media: String(x.media || '').slice(0, 200), kind: 'photo', likes: 30 + Math.floor(Math.random() * 300), t: Date.now(), comments: [], story: `Бифф: ${th.name} против ${s.profile.name}` });
+                const voices = await voiceContext(s, [th.name], { includeChar: false });
+                if (S() !== s) return;
+                const x = await aiJSON(`${world(s)}${voices}\n\n${th.name}${th.species ? ` (${th.species})` : ''} поссорился(ась) с ${s.profile.name} в личке и реагирует на конфликт в ленте CityHub строго в собственной манере. Пиши претензию, холодную реплику или намёк только как свойственно этому человеку; не навязывай язвительность. Если по характеру он не стал бы публиковать такое, верни text пустым. Последние сообщения:\n${th.msgs.slice(-6).map((m) => `${m.me ? s.profile.name : th.name}: ${m.text}`).join('\n')}\nФормат: {"text":"до 280 символов","media":"пусто или описание скриншота переписки"}`);
+                if (S() !== s) return;
+                if (x?.text) {
+                    s.feed.unshift({ id: uid(), author: th.name, species: th.species || '', channel: 'general', text: cleanMsg(x.text).slice(0, 500), media: String(x.media || '').slice(0, 200), kind: 'photo', likes: 30 + Math.floor(Math.random() * 300), t: Date.now(), comments: [], story: `Бифф: ${th.name} против ${s.profile.name}` });
+                    soc(s).hate = clamp(soc(s).hate + 10, 0, 100);
+                    notify(s, `⚔️ Бифф с ${th.name}! Конфликт выплеснулся в ленту.`, 'warn', { view: 'thread', param: th.id });
+                }
             });
         }
         if (th.beef && th.rel > -20) th.beef = false;
@@ -2128,6 +2145,47 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     function lorePerson(s, name) {
         return (s.lorePeople || []).find((p) => samePerson(s, p.name, name));
     }
+    const NPC_VOICE_FORMAT = `Для НОВОГО придуманного NPC, у которого нет готовой манеры ниже и нет сведений в карточке/лоре, вместе с его первой репликой заполни voice: {"style":"постоянные особенности речи: лексика, длина фраз, обращения, юмор, сдержанность; без отношения к пользователю и текущего настроения","emoji":"never|rare|natural","slang":"never|light|natural","examples":["нейтральная реплика для стиля, без личных фактов"]}. Придумай индивидуальную манеру по его известному характеру и сразу пиши текст в ней. Эмодзи/сленг включай только когда они соответствуют этому характеру, иначе never. Для известного автора повторно используй его закреплённую манеру, voice:null; не создавай другую личность или вариант имени для смены стиля.`;
+    function inventedNpc(s, name, lore = '') {
+        if (!name || samePerson(s, name, s.profile.name) || (!ctx().groupId && samePerson(s, name, ctx().name2)) || lorePerson(s, name)) return false;
+        if (s.threads.some((t) => (t.kind === 'group' || t.kind === 'official') && nameSpelling(t.name) === nameSpelling(name))) return false;
+        const source = `${macros(relationshipCardSource())}\n${lore}`.normalize('NFKC').toLowerCase().replace(/ё/g, 'е').replace(/[\s’'".-]+/g, ' ').trim();
+        const aliases = peopleIndex(s).aliases.find((p) => samePerson(s, p.name, name));
+        return ![name, ...(aliases?.aliases || [])].some((n) => new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRE(nameSpelling(n))}([^\\p{L}\\p{N}]|$)`, 'u').test(source));
+    }
+    function npcVoice(s, name) { return (s.npcVoices || []).find((p) => samePerson(s, p.name, name)); }
+    function publicSpeech(s, name) {
+        const samples = [];
+        for (const post of s.feed) {
+            if (!post.mine && samePerson(s, post.author, name) && post.text) samples.push(post.text);
+            for (const c of shownComments(post)) if (!c.mine && samePerson(s, c.author, name) && c.text) samples.push(c.text);
+            if (samples.length >= 3) break;
+        }
+        return samples.slice(0, 3);
+    }
+    /** Create once, never infer a new voice from later mood or relationship changes. */
+    function rememberNpcVoices(s, records, lore = '') {
+        if (S() !== s) return false;
+        let changed = false;
+        for (const record of records) {
+            const name = canonicalName(s, record?.author || record?.name);
+            if (!inventedNpc(s, name, lore) || npcVoice(s, name)) continue;
+            const v = record.voice, valid = v && typeof v === 'object' && !Array.isArray(v) && typeof v.style === 'string' && v.style.trim();
+            const samples = publicSpeech(s, name);
+            if (!samples.length && record.text) samples.push(cleanMsg(record.text));
+            const text = samples.join(' '), average = samples.length ? text.length / samples.length : 0;
+            const styles = ['Короткие прямые фразы, простая лексика; тон по известному характеру.', 'Полные аккуратные предложения, точные формулировки; тон по известному характеру.', 'Разговорные ясные фразы, обычная лексика; юмор только по известному характеру.', 'Краткие конкретные ответы, мало вводных слов; тон по известному характеру.'];
+            const fallback = samples.length ? `${average < 90 ? 'Короткие' : average < 180 ? 'Средние по длине' : 'Развёрнутые'} фразы. Сохраняет лексику и построение фраз первых публичных реплик; не закрепляй их ситуативное настроение как черту характера.` : styles[hash(personKey(name)) % styles.length];
+            s.npcVoices.push({ id: uid(), name, createdAt: Date.now(), source: valid ? 'generated' : samples.length ? 'legacy' : 'fallback',
+                style: valid ? cleanMsg(v.style).slice(0, 700) : fallback,
+                emoji: valid ? (['never', 'rare', 'natural'].includes(v.emoji) ? v.emoji : 'never') : /\p{Extended_Pictographic}/u.test(text) ? 'rare' : 'never',
+                slang: valid ? (['never', 'light', 'natural'].includes(v.slang) ? v.slang : 'never') : /\b(?:lol|omg)\b|(?:^|\s)(?:чё|ща|лол|кринж|имба)(?:\s|[!?.,]|$)/iu.test(text) ? 'light' : 'never',
+                examples: (valid && Array.isArray(v.examples) ? v.examples.filter((e) => typeof e === 'string') : samples).slice(0, 3).map((e) => cleanMsg(e).slice(0, 250)),
+            });
+            changed = true;
+        }
+        return changed;
+    }
     const VOICE_RULE = `ГОЛОС КАЖДОГО АВТОРА: сохраняй его собственные характер, лексику, обращения, длину фраз, прямоту, юмор, сдержанность и манеру из карточки/лорбука и его примеров речи. Не переноси голос основного персонажа на NPC или одного NPC на другого. Если карточка отдельно описывает NPC, эти сведения относятся к этому NPC. Эмодзи и сленг используй только если они свойственны этому конкретному автору по источникам; иначе пиши без них. Соцсеть сама по себе не делает человека эмоциональным, фамильярным, остроумным или разговорчивым. Отношения и настроение меняют содержание и тон, но не подменяют личность: близкий не обязан одобрять всё, враг не обязан язвить в каждой реплике. Примеры речи — ориентир стиля, не произошедшие события и не готовый ответ; не копируй их дословно. Факты карточки/лора важнее старых сгенерированных публикаций. Если манера NPC не описана, держись его известных черт и прежней речи, не придумывай новый акцент, словечки, эмодзи или сленг при каждом запросе.`;
     /** Current personal relationships, including mild/old conflicts outside recent story excerpts. */
     function authorRelations(s, names) {
@@ -2147,6 +2205,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const aliases = peopleIndex(s).aliases.filter((p) => authors.some((n) => samePerson(s, n, p.name)));
         const lookup = [...authors, ...aliases.flatMap((p) => [p.name, ...p.aliases]), ...(includeChar && !c.groupId ? [c.name2] : [])].filter(Boolean).join('\n');
         const lore = lookup ? await loreFor(lookup, { full: true, exactKeys: true }) : '';
+        if (S() !== s) return '';
+        if (rememberNpcVoices(s, authors.map((name) => ({ name })), lore)) save(s);
         const profiles = authors.filter((n) => c.groupId || !samePerson(s, n, c.name2)).map((n) => {
             const p = lorePerson(s, n), th = s.threads.find((t) => t.kind === 'dm' && samePerson(s, t.name, n));
             const samples = [];
@@ -2155,7 +2215,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 for (const comment of shownComments(post)) if (!comment.mine && samePerson(s, comment.author, n) && comment.text) samples.push(comment.text);
                 if (samples.length >= 3) break;
             }
-            return `${n}: ${p ? `${p.bio || ''}${p.relation ? `; для ${c.name2}: ${p.relation}` : ''}` : ''}${th?.bio ? `\nСведения о собеседнике: ${th.bio}` : ''}${samples.length ? `\nПрежняя публичная речь (только стиль; не повторяй): ${JSON.stringify(samples.slice(0, 3))}` : ''}`;
+            const voice = inventedNpc(s, n, lore) ? npcVoice(s, n) : null;
+            return `${n}: ${p ? `${p.bio || ''}${p.relation ? `; для ${c.name2}: ${p.relation}` : ''}` : ''}${th?.bio ? `\nСведения о собеседнике: ${th.bio}` : ''}${voice ? `\nЗАКРЕПЛЁННАЯ МАНЕРА: ${voice.style}\nЭмодзи: ${voice.emoji}; сленг: ${voice.slang}. never — без них; rare/light — редко и умеренно; natural — только уместно характеру. Образцы стиля (не события): ${JSON.stringify(voice.examples)}. Этот профиль постоянный, не меняй его при обновлении ленты или ссоре; фактические сведения карточки/лора имеют приоритет. Новые реплики и настроение не переопределяют профиль.` : ''}${samples.length ? `\nПрежняя публичная речь (только стиль; не повторяй): ${JSON.stringify(samples.slice(0, 3))}` : ''}`;
         });
         const relations = authorRelations(s, [...authors, ...(includeChar && !c.groupId ? [c.name2] : [])]);
         return `\n\n${VOICE_RULE}${includeChar && !c.groupId ? `\n\nИсточник голоса основного персонажа (только для ${c.name2}):\n${charCard()}` : ''}${profiles.length ? `\n\nОтдельные сведения об авторах NPC:\n${profiles.join('\n---\n')}` : ''}${lore ? `\n\nПолные записи лора выбранных авторов (сведения относятся только к названным в записи людям):\n${lore}` : ''}${relations}${social ? `\n\nСобытия истории для рассказчика:\n${recentStory(12) || '(нет)'}\nТекущая сцена: ${currentScene() || '(нет)'}. Каждый автор знает только то, что видел, слышал или ему рассказали; публичный пост не раскрывает автоматически личную переписку и чужие секреты.` : ''}`;
@@ -3124,7 +3185,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.24 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.25 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -3501,11 +3562,13 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             st ? `Пост — часть сюжетной линии «${st.title}» (участники: ${st.cast.join(', ')}): ${st.summary}` : '',
             p.mine && cancelled(s) ? `Сейчас ${s.profile.name} «отменяют» в сети: большинство комментаторов настроены враждебно, лишь пара человек заступается.` : '',
         ].filter(Boolean).join('\n');
-        const voices = await voiceContext(s, [p.author, ...shownComments(p).map((c) => c.author), ...s.lorePeople.map((p) => p.name), ...s.threads.filter((t) => t.kind === 'dm').map((t) => t.name)]);
+        const voices = await voiceContext(s, [p.author, ...shownComments(p).map((c) => c.author), ...s.lorePeople.map((p) => p.name), ...s.threads.filter((t) => t.kind === 'dm').map((t) => t.name), ...s.npcVoices.map((v) => v.name)]);
         if (S() !== s) return [];
         const scoreFmt = scoreWhat ? `\nТакже оцени ${scoreWhat} ${s.profile.name}: authority (−5…5 — насколько это подняло авторитет ${s.profile.name}: остроумие, смелость, поддержка, интересная мысль — плюс; грубость, кринж, глупость — минус), controversy (0…10 — насколько спорно или токсично), sentiment (positive, mixed или negative — как восприняло сообщество). Реакция комментаторов должна соответствовать оценке.\nЕсли кто-то из комментаторов пообещал написать ${s.profile.name} в личку, начал договариваться с ней/ним о встрече или явно хочет продолжить разговор наедине — заполни followup: {"from":"имя этого комментатора","is_char":true если это ${ctx().name2} — персонаж основной истории, иначе false,"intent":"что он(а) напишет в личке — например, уточнит день, время и место встречи"}. Иначе followup: null.` : '';
-        const r = await aiJSON(`${world(s)}${voices}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${postText(p)}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии короткие, но каждый автор пишет в собственной манере по правилам голоса выше; не добавляй эмоции, эмодзи и сленг всем подряд. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
+        const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${postText(p)}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии короткие, но каждый автор пишет в собственной манере по правилам голоса выше; не добавляй эмоции, эмодзи и сленг всем подряд. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3,"voice":null}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
+        if (S() !== s) return [];
         const arr = Array.isArray(r) ? r : (Array.isArray(r?.comments) ? r.comments : []);
+        if (rememberNpcVoices(s, arr.filter((c) => c && c.author && c.text))) save(s);
         const list = arr.filter((c) => c && c.author && c.text && cleanName(c.author) !== s.profile.name).slice(0, 8).map((c) => ({
             id: uid(), author: canonicalName(s, c.author), species: SP(s, c.species), text: stripMention(cleanMsg(c.text), cleanName(c.replyTo)).slice(0, 400),
             replyTo: canonicalName(s, c.replyTo), likes: Math.max(0, parseInt(c.likes, 10) || 0), liked: false,
@@ -3941,13 +4004,14 @@ ${story}
             const act = s.stories.filter((x) => now - x.updated < 5 * DAY).slice(-4);
             const storyTxt = act.map((x) => `- «${x.title}» (участники: ${x.cast.join(', ')}): ${x.summary}${x.userActs?.length ? ` Вмешательство ${name}: ${x.userActs.slice(-3).join(' | ')}` : ''}`).join('\n');
             const rels = s.threads.filter((t) => t.kind !== 'group' && (Math.abs(t.rel || 0) >= 40 || (t.flirt || 0) >= 3)).slice(0, 6).map((t) => `${t.name} — ${relLabel(t)}`).join('; ');
-            const voices = await voiceContext(s, [...s.lorePeople.map((p) => p.name), ...s.feed.slice(0, 12).map((p) => p.author), ...s.threads.filter((t) => t.kind === 'dm').map((t) => t.name)]);
+            const voices = await voiceContext(s, [...s.lorePeople.map((p) => p.name), ...s.feed.slice(0, 12).map((p) => p.author), ...s.threads.filter((t) => t.kind === 'dm').map((t) => t.name), ...s.npcVoices.map((v) => v.name)]);
             if (S() !== s) return;
-            const r = await aiJSON(`${world(s)}${voices}\n\nСгенерируй 6 свежих публикаций в ленту CityHub от разных жителей города разных возрастов и профессий (есть и добрые, и неприятные люди).${loreStudentsLine(s)} Весь текст на русском, включая названия видов (имена могут быть любыми). Каналы: general, study, clubs, dorms, species.${s.profile.species ? ` Минимум 1 пост от вида «${s.profile.species}» в канал species.` : ''}
+            const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\n\nСгенерируй 6 свежих публикаций в ленту CityHub от разных жителей города разных возрастов и профессий (есть и добрые, и неприятные люди).${loreStudentsLine(s)} Весь текст на русском, включая названия видов (имена могут быть любыми). Каналы: general, study, clubs, dorms, species.${s.profile.species ? ` Минимум 1 пост от вида «${s.profile.species}» в канал species.` : ''}
 Лента живая: жители общаются МЕЖДУ СОБОЙ. 3–4 поста — сюжетные линии: продолжение активных сюжетов (ссоры, романы, соперничество, розыгрыши, расследования, сплетни) или начало нового. Участники отвечают друг другу постами и упоминают друг друга через @Имя, сюжет развивается от ленты к ленте. Персонажи сюжетов реагируют на вмешательство ${name}.
 ${storyTxt ? `Активные сюжеты:\n${storyTxt}\n` : ''}${rels ? `Отношения ${name} в CityHub (могут всплывать в ленте — биффы, флирт, сплетни): ${rels}\n` : ''}${cancelled(s) ? `Сейчас ${name} «отменяют» в сети — это активно обсуждают.\n` : ''}1–2 поста могут обсуждать ${name}: реакцию на вид и способности по правилам выше.
 ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx().name2} (персонаж основной истории): в его характере и манере, о том, что он мог бы написать прямо сейчас — с учётом событий истории и не противореча текущей сцене. Подпись — как он представился бы в соцсети (имя, можно с фамилией).` : ''}
-Формат: {"posts":[{"author":"Имя","species":"вид","channel":"general","text":"до 300 символов","media":"описание фото или видео, либо пустая строка","kind":"photo|video|reel|story","likes":12,"verified":true,"story":"название сюжета или пустая строка"}],"stories":[{"title":"название сюжета","cast":["Имя","Имя"],"summary":"что происходит сейчас, 1–2 предложения"}]}`);
+Формат: {"posts":[{"author":"Имя","species":"вид","channel":"general","text":"до 300 символов","media":"описание фото или видео, либо пустая строка","kind":"photo|video|reel|story","likes":12,"verified":true,"story":"название сюжета или пустая строка","voice":null}],"stories":[{"title":"название сюжета","cast":["Имя","Имя"],"summary":"что происходит сейчас, 1–2 предложения"}]}`);
+            if (S() !== s) return;
             const arr = Array.isArray(r) ? r : (Array.isArray(r?.posts) ? r.posts : []);
             if (!arr.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
             for (const st of Array.isArray(r?.stories) ? r.stories : []) {
@@ -3962,6 +4026,7 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
             }
             if (s.stories.length > 12) s.stories = s.stories.slice(-12);
             const posts = arr.filter((p) => p && p.author && p.text).map((p, i) => ({ id: uid(), author: cleanName(p.author), species: SP(s, p.species), channel: CHANNELS[p.channel] && p.channel !== 'all' ? p.channel : 'general', text: cleanMsg(p.text).slice(0, 600), media: String(p.media || '').slice(0, 200), kind: p.kind, likes: Math.max(0, parseInt(p.likes, 10) || 0), verified: p.verified !== false, t: now - i * 7 * MIN, comments: [], story: cleanName(p.story).slice(0, 60) }));
+            rememberNpcVoices(s, arr.filter((p) => p && p.author && p.text));
             s.feed = [...posts, ...s.feed].slice(0, 80);
             save(s);
         }),
@@ -3988,11 +4053,16 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
             dt.profiles = [];
             return withBusy('Подбираю анкеты…', async () => {
                 const ages = AGE_GROUPS[dt.fAge] || '18 и старше';
-                const r = await aiJSON(`${world(s)}\n\n${loreStudentsLine(s)}\nЕсли среди жителей из лора есть подходящие под фильтры совершеннолетние — включи 1–2 из них с их настоящими данными, остальных придумай.\nСгенерируй 5 анкет жителей города для ${dt.mode === 'friends' ? 'поиска друзей' : 'романтических знакомств'} в CityHub. СТРОГО только совершеннолетние: возраст в пределах ${ages} лет (никогда младше 18). Фильтр по полу: ${{ m: 'только мужчины', f: 'только женщины', nb: 'только небинарные люди' }[dt.fGender] || 'любой'}. Люди разные: разных профессий, характеров, с достоинствами и недостатками — не все идеальные.
+                const voices = await voiceContext(s, [...s.npcVoices.map((p) => p.name), ...s.lorePeople.map((p) => p.name)], { social: false, includeChar: false });
+                if (S() !== s) return;
+                const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\n${loreStudentsLine(s)}\nЕсли среди жителей из лора есть подходящие под фильтры совершеннолетние — включи 1–2 из них с их настоящими данными, остальных придумай.\nСгенерируй 5 анкет жителей города для ${dt.mode === 'friends' ? 'поиска друзей' : 'романтических знакомств'} в CityHub. СТРОГО только совершеннолетние: возраст в пределах ${ages} лет (никогда младше 18). Фильтр по полу: ${{ m: 'только мужчины', f: 'только женщины', nb: 'только небинарные люди' }[dt.fGender] || 'любой'}. Люди разные: разных профессий, характеров, с достоинствами и недостатками — не все идеальные.
 Оцени совместимость характеров и интересов с пользователем (compat 0–100) и коротко объясни.
-Формат: [{"name":"Имя Фамилия","age":27,"gender":"m, f или nb","profession":"профессия или пусто, если не работает","looks":"внешность, 1–2 предложения","character":"характер, 1–2 предложения","hobbies":"хобби","likes":"что любит","dislikes":"что не любит","seeks":"что ищет в людях","bio":"коротко о себе, до 160 символов","compat":75,"compatNote":"одно предложение","verified":true}]`);
+Формат: [{"name":"Имя Фамилия","age":27,"gender":"m, f или nb","profession":"профессия или пусто, если не работает","looks":"внешность, 1–2 предложения","character":"характер, 1–2 предложения","hobbies":"хобби","likes":"что любит","dislikes":"что не любит","seeks":"что ищет в людях","bio":"коротко о себе, до 160 символов","compat":75,"compatNote":"одно предложение","verified":true,"voice":null}]`);
+                if (S() !== s) return;
                 if (!Array.isArray(r) || !r.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
-                dt.profiles = r.filter((p) => p && p.name && (parseInt(p.age, 10) || 18) >= 18).map((p) => ({ id: uid(), name: cleanName(p.name).slice(0, 40), age: Math.max(18, parseInt(p.age, 10) || 25), species: '', faculty: cleanMsg(p.profession || p.faculty || '').slice(0, 60), looks: cleanMsg(p.looks || '').slice(0, 300), character: cleanMsg(p.character || '').slice(0, 300), hobbies: cleanMsg(p.hobbies || '').slice(0, 200), likes: cleanMsg(p.likes || '').slice(0, 200), dislikes: cleanMsg(p.dislikes || '').slice(0, 200), seeks: cleanMsg(p.seeks || '').slice(0, 200), abilities: String(p.abilities || '').slice(0, 120), bio: String(p.bio || '').slice(0, 300), compat: clamp(parseInt(p.compat, 10) || 50, 0, 100), compatNote: String(p.compatNote || '').slice(0, 160), verified: p.verified !== false }));
+                const candidates = r.filter((p) => p && p.name && (parseInt(p.age, 10) || 18) >= 18);
+                dt.profiles = candidates.map((p) => ({ id: uid(), name: cleanName(p.name).slice(0, 40), age: Math.max(18, parseInt(p.age, 10) || 25), species: '', faculty: cleanMsg(p.profession || p.faculty || '').slice(0, 60), looks: cleanMsg(p.looks || '').slice(0, 300), character: cleanMsg(p.character || '').slice(0, 300), hobbies: cleanMsg(p.hobbies || '').slice(0, 200), likes: cleanMsg(p.likes || '').slice(0, 200), dislikes: cleanMsg(p.dislikes || '').slice(0, 200), seeks: cleanMsg(p.seeks || '').slice(0, 200), abilities: String(p.abilities || '').slice(0, 120), bio: String(p.bio || '').slice(0, 300), compat: clamp(parseInt(p.compat, 10) || 50, 0, 100), compatNote: String(p.compatNote || '').slice(0, 160), verified: p.verified !== false }));
+                rememberNpcVoices(s, dt.profiles.map((p, i) => ({ ...p, voice: candidates[i].voice })));
                 save(s);
             });
         },
