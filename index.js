@@ -78,7 +78,7 @@
     const fmtDay = (ts) => new Date(ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
     const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
     const pad = (t) => String(t).trim().padStart(5, '0');
-    const TIME_RE = /^\d{1,2}:\d{2}$/;
+    const TIME_RE = /^(?:[01]?\d|2[0-3]):[0-5]\d$/;
     const dkey = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
     function byId(id) {
         const root = document.getElementById('cityhub-phone');
@@ -309,12 +309,7 @@
     const mundane = () => true;
     const SP = (s, v) => (mundane(s) ? '' : String(v || '').slice(0, 40));
     const CHANNELS = { all: 'Все', general: 'Общее', study: 'Работа и учёба', clubs: 'Хобби', dorms: 'Район', species: 'Мой вид' };
-    const CONSEQ = ['Участковый выносит официальное предупреждение.',
-        'Куратор вызывает студента в деканат для объяснений.',
-        'Назначена отработка в библиотеке в субботу.',
-        'В личное дело внесено письменное предупреждение.',
-        'Преподаватель сообщил о нарушении старосте курса.',
-    ];
+    const CONSEQ = ['Отдел полиции сообщает: обращение зарегистрировано, обстоятельства происшествия будут проверены.'];
     const FALLBACK_FACULTIES = [
         { name: 'Факультет боевой магии', desc: 'Защитные и атакующие чары, тактика.', source: 'invented' },
         { name: 'Факультет алхимии и зельеварения', desc: 'Трансмутация, эликсиры, яды и противоядия.', source: 'invented' },
@@ -579,12 +574,12 @@
         peopleIndex(s).reconciled = !deferred;
     }
 
-    let saveTimer = null;
     function save(s) {
         if (s && S() !== s) return;
         updateInjection();
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => { try { ctx().saveMetadata?.(); } catch (e) { logErr('[CityHub] save', e); } }, 400);
+        // Start while this chat is active; a local debounce can lose the last action on chat change.
+        try { Promise.resolve(ctx().saveMetadata?.()).catch((e) => logErr('[CityHub] save', e)); }
+        catch (e) { logErr('[CityHub] save', e); }
     }
 
     // куда ведёт уведомление, если место не указано явно — по смыслу текста
@@ -608,18 +603,26 @@
         if (type !== 'social') toast({ warn: 'warning', bad: 'error', important: 'info', info: 'success' }[type] || 'info', text);
     }
     function tx(s, amount, label) {
-        s.wallet.balance = Math.round((s.wallet.balance + amount) * 100) / 100;
+        if (!Number.isFinite(amount) || !Number.isFinite(s.wallet.balance)
+            || !Number.isFinite(s.wallet.balance + amount)) return false;
+        const balance = Math.round((s.wallet.balance + amount) * 100) / 100;
+        if (!Number.isFinite(balance)) return false;
+        s.wallet.balance = balance;
         s.wallet.history.unshift({ amount, label, t: Date.now() });
         if (s.wallet.history.length > 200) s.wallet.history.length = 200;
+        return true;
     }
     /** Списание с проверкой баланса. Нельзя купить дороже, чем есть на счёте. */
     function pay(s, amount, label) {
+        if (!Number.isFinite(amount) || amount < 0 || !Number.isFinite(s.wallet.balance)) {
+            toast('error', 'Некорректная сумма — операция отменена.');
+            return false;
+        }
         if (s.wallet.balance < amount) {
             toast('error', `Недостаточно средств: нужно ${money(amount)}, на счёте ${money(s.wallet.balance)}.`);
             return false;
         }
-        tx(s, -amount, label);
-        return true;
+        return tx(s, -amount, label);
     }
 
     /* ───────────────────────── учёба: расчёты ───────────────────────── */
@@ -635,11 +638,13 @@
         const [eh, em] = cl.end.split(':').map(Number);
         const a = new Date(day); a.setHours(sh, sm, 0, 0);
         const b = new Date(day); b.setHours(eh, em, 0, 0);
+        if (b.getTime() < a.getTime()) b.setDate(b.getDate() + 1);
         return { start: a.getTime(), end: b.getTime() };
     }
     function occurrences(s, from, to) {
         const out = [];
         const d = new Date(from); d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - 1); // Include shifts that began before midnight.
         while (d.getTime() <= to) {
             const w = (d.getDay() + 6) % 7;
             for (const cl of s.schedule) {
@@ -657,9 +662,10 @@
         return { cur: occ.find((o) => o.start <= now && o.end > now), next: occ.find((o) => o.start > now) };
     }
     function findOcc(s, key) {
+        if (typeof key !== 'string' || !/^[^@]+@\d{4}-\d{1,2}-\d{1,2}$/.test(key)) return;
         const [, date] = key.split('@');
-        const [y, m, d] = date.split('-').map(Number);
-        const day = new Date(y, m - 1, d).getTime();
+        const day = dayOf(date);
+        if (!Number.isFinite(day)) return;
         return occurrences(s, day, day + DAY - 1).find((o) => o.key === key);
     }
 
@@ -881,12 +887,26 @@
         return '';
     }
     /** Записи лорбука, чьи ключи встречаются в тексте, плюс постоянные записи. */
-    async function loreFor(text, { full = false, exactKeys = false } = {}) {
-        const c = ctx();
-        const ch = c.characters?.[c.characterId];
+    let worldInfoModule = null;
+    const readWorldInfoModule = () => worldInfoModule ||= import('../../../world-info.js').catch(() => null);
+    /** Only books actually linked/selected in SillyTavern; never all installed books. */
+    async function loreBooks(c, ch) {
         const books = new Set();
         if (ch?.data?.extensions?.world) books.add(ch.data.extensions.world);
         if (c.chatMetadata?.world_info) books.add(c.chatMetadata.world_info);
+        if (c.powerUserSettings?.persona_description_lorebook) books.add(c.powerUserSettings.persona_description_lorebook);
+        if (typeof c.loadWorldInfo === 'function') {
+            const wi = await readWorldInfoModule();
+            for (const name of wi?.selected_world_info || []) books.add(name);
+            const fileName = String(ch?.avatar || '').replace(/\.[^.]+$/, '');
+            for (const name of wi?.world_info?.charLore?.find((e) => e.name === fileName)?.extraBooks || []) books.add(name);
+        }
+        return books;
+    }
+    async function loreFor(text, { full = false, exactKeys = false } = {}) {
+        const c = ctx();
+        const ch = c.characters?.[c.characterId];
+        const books = await loreBooks(c, ch);
         const low = String(text).toLowerCase();
         const out = [];
         const take = (keys, content, constant, disabled) => {
@@ -950,22 +970,22 @@
     async function loreText(filterRe) {
         const c = ctx();
         const ch = c.characters?.[c.characterId];
-        const books = new Set();
-        if (ch?.data?.extensions?.world) books.add(ch.data.extensions.world);
-        if (c.chatMetadata?.world_info) books.add(c.chatMetadata.world_info);
+        const books = await loreBooks(c, ch);
         const out = [];
-        const take = (keys, content) => {
-            const t = `${(keys || []).join(', ')}: ${content || ''}`;
+        const take = (keys, content, disabled) => {
+            if (disabled || !content) return;
+            const t = `${(Array.isArray(keys) ? keys : []).join(', ')}: ${macros(content)}`;
+            if (filterRe) filterRe.lastIndex = 0;
             if (!filterRe || filterRe.test(t)) out.push(t);
         };
         for (const name of books) {
             try {
                 const data = await c.loadWorldInfo?.(name);
-                for (const e of Object.values(data?.entries || {})) take(e.key, e.content);
+                for (const e of Object.values(data?.entries || {})) take(e.key, e.content, e.disable);
             } catch (e) { logErr('[CityHub] lorebook', e); }
         }
-        for (const e of ch?.data?.character_book?.entries || []) take(e.keys, e.content);
-        return out.join('\n').slice(0, 5000);
+        for (const e of ch?.data?.character_book?.entries || []) take(e.keys, e.content, e.enabled === false);
+        return out.join('\n');
     }
 
     // последовательная очередь фоновых запросов к ИИ
@@ -983,7 +1003,9 @@
 
     async function loadFaculties(s) {
         const lore = await loreText(/факульт|faculty|кафедр|университет|академи|колледж|институт|school|college|department|major/i);
+        if (S() !== s) return;
         const r = await aiJSON(`${world(s)}\n\nЛор (лорбук и карточка):\n${lore || '(нет данных)'}\n\nЗадача: определи список факультетов университета. Если факультеты упомянуты в лоре или описании персонажа — используй ИМЕННО их и пометь source "lore". Если информации нет — придумай 8–10 разнообразных факультетов, подходящих этому миру (гуманитарные, естественные, творческие, прикладные), source "invented". Если в лоре факультетов меньше 4 — дополни их придуманными.\nФормат: [{"name":"...","desc":"одно предложение","source":"lore"}]`);
+        if (S() !== s) return;
         const list = Array.isArray(r) ? r.filter((f) => f && f.name).map((f) => ({ name: String(f.name).slice(0, 80), desc: String(f.desc || '').slice(0, 160), source: f.source === 'lore' ? 'lore' : 'invented' })) : [];
         return list.length ? list : (mundane(s) ? MUNDANE_FACULTIES : FALLBACK_FACULTIES);
     }
@@ -1001,11 +1023,27 @@
         }
         return out;
     }
+    /** Validate model times and reject overlaps, including Sunday night into Monday. */
+    function validSchedule(items, overnight = false) {
+        const minutes = (v) => { const [h, m] = pad(v).split(':').map(Number); return h * 60 + m; };
+        const slots = [], week = 7 * 24 * 60;
+        return (Array.isArray(items) ? items : []).filter((c) => {
+            if (!c || !Number.isInteger(+c.day) || +c.day < 0 || +c.day > 6 || !c.subject
+                || !TIME_RE.test(String(c.start).trim()) || !TIME_RE.test(String(c.end).trim())) return false;
+            const start = minutes(c.start), end = minutes(c.end);
+            if (start === end || (!overnight && end < start)) return false;
+            const a = +c.day * 1440 + start, b = +c.day * 1440 + end + (end < start ? 1440 : 0);
+            if (slots.some(([x, y]) => [-week, 0, week].some((offset) => a < y + offset && b > x + offset))) return false;
+            slots.push([a, b]);
+            return true;
+        });
+    }
     async function genSchedule(s, fac) {
         const lore = await loreText(new RegExp(escRe(fac.slice(0, 30)), 'i'));
+        if (S() !== s) return;
         const r = await aiJSON(`${world(s)}\n${lore ? `Лор о факультете:\n${lore}\n` : ''}\nСоставь недельное расписание пар для студента ${s.profile.year}-го курса факультета «${fac}». Дни Пн–Сб (day: 0 = понедельник … 5 = суббота), 2–4 пары в день, время между 08:30 и 19:00, пара 60–95 минут, без пересечений. 6–9 разных профильных предметов, подходящих миру; предметы повторяются в течение недели.\nФормат: [{"day":0,"start":"09:00","end":"10:30","subject":"...","teacher":"...","room":"..."}]`);
-        const ok = (Array.isArray(r) ? r : []).filter((c) => c && Number.isInteger(+c.day) && +c.day >= 0 && +c.day <= 6
-            && TIME_RE.test(String(c.start).trim()) && TIME_RE.test(String(c.end).trim()) && c.subject && pad(c.end) > pad(c.start));
+        if (S() !== s) return;
+        const ok = validSchedule(r);
         const list = ok.length >= 4 ? ok : fallbackSchedule(fac);
         return list.map((c) => ({
             id: uid(), day: +c.day, start: pad(c.start), end: pad(c.end), type: 'study',
@@ -1025,8 +1063,8 @@
             : `${p.name} работает: ${p.profession}. Составь реалистичный недельный график работы для этой профессии (офис 5/2, смены у пожарных и врачей, ночные у охраны, гибкий у фрилансера и т.п.), плюс 1–2 прогулки или тренировки в свободное время. type: "work" для смен, "walk" для прогулок.`}
 Дни 0 = понедельник … 6 = воскресенье. subject — что это (например, «Смена в пожарной части №3», «Вечерняя пробежка»), teacher — начальник или с кем (можно пусто), room — где.
 Формат: [{"day":0,"start":"09:00","end":"18:00","type":"work","subject":"","teacher":"","room":""}]`);
-        const ok = (Array.isArray(r) ? r : []).filter((c) => c && Number.isInteger(+c.day) && +c.day >= 0 && +c.day <= 6
-            && TIME_RE.test(String(c.start).trim()) && TIME_RE.test(String(c.end).trim()) && c.subject && pad(c.end) > pad(c.start));
+        if (S() !== s) return;
+        const ok = validSchedule(r, true);
         const list = ok.length >= 2 ? ok : (idle
             ? [0, 2, 4].map((d) => ({ day: d, start: '10:00', end: '11:30', type: 'walk', subject: 'Прогулка в парке', teacher: '', room: 'Городской парк' }))
             : [0, 1, 2, 3, 4].map((d) => ({ day: d, start: '09:00', end: '18:00', type: 'work', subject: `Работа: ${p.profession}`, teacher: 'Руководитель', room: 'Рабочее место' })));
@@ -1041,6 +1079,7 @@
     function genTaskDesc(s, t) {
         enqueue(s, async () => {
             const r = await aiJSON(`${world(s)}\n\nПридумай ${t.work ? `рабочее поручение для профессии «${s.profile.profession}» — реалистичное, как от начальника (отчёт, план, разбор случая, письмо клиенту и т.п.)` : t.extra ? 'дополнительное поручение-подработку для этого жителя с учётом профессии' : `домашнее задание по предмету «${t.subject}»`}. Выполняется письменным ответом на 3–10 предложений: эссе, решение задачи, разбор ситуации, описание ритуала или эксперимента.\nФормат: {"title":"короткое название","desc":"формулировка задания, 2–4 предложения"}`);
+            if (S() !== s || !s.tasks.includes(t) || t.done) return;
             t.title = (r?.title ? `${t.extra ? 'Доп.: ' : ''}${String(r.title).slice(0, 80)}` : t.title);
             t.desc = r?.desc ? String(r.desc).slice(0, 800) : `Письменно ответьте: какие три главные идеи последнего занятия по предмету «${t.subject}» вы усвоили и как примените их на практике?`;
         });
@@ -1067,9 +1106,13 @@
         notify(s, `📋 Замечание: ${reason}. Удержано ${money(fine)}.`, 'warn', { tab: 'study', studyTab: 'schedule' });
         enqueue(s, async () => {
             const who = ty === 'study' ? 'преподаватель или куратор' : 'начальник или руководитель';
-            const r = await aiJSON(`${world(s)}\n\n${s.profile.name} (${s.profile.profession}): ${reason}. Это уже ${s.warnings}-е замечание. Напиши сообщение, которое присылает ${who} в мессенджере CityHub — в характере этого человека (кто-то строгий, кто-то понимающий, кто-то грубый).\nФормат: {"from":"имя и должность","text":"1–3 предложения"}`);
+            const voices = await voiceContext(s, [...s.npcVoices.map((p) => p.name), ...s.lorePeople.map((p) => p.name)], { social: false });
+            if (S() !== s) return;
+            const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\n${s.profile.name} (${s.profile.profession}): ${reason}. Это уже ${s.warnings}-е замечание. Напиши сообщение, которое присылает ${who} в мессенджере CityHub — в характере этого человека (кто-то строгий, кто-то понимающий, кто-то грубый).\nФормат: {"from":"имя и должность","text":"1–3 предложения","voice":null}`);
+            if (S() !== s) return;
             if (!r?.text) return;
             const from = canonicalName(s, r.from) || (ty === 'study' ? 'Куратор' : 'Руководитель');
+            rememberNpcVoices(s, [{ name: from, voice: r.voice, text: r.text }]);
             let th = s.threads.find((t) => t.kind !== 'group' && t.kind !== 'official' && samePerson(s, t.name, from));
             if (!th) { th = { id: uid(), name: from, species: '', bio: ty === 'study' ? 'преподаватель' : 'начальник по работе', kind: 'dm', msgs: [], t: Date.now(), unread: 0, rel: 0, known: true, status: 'по работе' }; s.threads.unshift(th); }
             if (await mayReceivePersonal(s, th)) { th.msgs.push({ me: false, text: cleanMsg(r.text).slice(0, 500), t: Date.now() }); th.unread = (th.unread || 0) + 1; th.t = Date.now(); }
@@ -1116,9 +1159,10 @@
             extras.push(`задание до ${fmtD(t.deadline)}`);
         }
         if (r?.appointment && typeof r.appointment === 'object') {
-            const tm = /^(\d{1,2}):(\d{2})$/.exec(String(r.appointment.time || '').trim());
-            const d = new Date(NOW()); d.setDate(d.getDate() + clamp(parseInt(r.appointment.inDays, 10) || 1, 0, 7));
-            d.setHours(tm ? +tm[1] : 15, tm ? +tm[2] : 0, 0, 0);
+            const tm = TIME_RE.test(String(r.appointment.time || '').trim()) ? String(r.appointment.time).trim().split(':') : null;
+            const days = parseInt(r.appointment.inDays, 10);
+            const d = new Date(NOW()); d.setDate(d.getDate() + clamp(Number.isFinite(days) ? days : 1, 0, 7));
+            d.setHours(tm ? +tm[0] : 15, tm ? +tm[1] : 0, 0, 0);
             let at = d.getTime();
             if (at < NOW() + HOUR) at += DAY;
             const ov = occurrences(s, at - 3 * HOUR, at + HOUR).find((o) => o.start < at + HOUR && o.end > at);
@@ -1137,7 +1181,7 @@
         let ch = false;
 
         for (const o of s.orders) {
-            if (o.notified || o.kind === 'food' || gnow < o.eta) continue;
+            if (o.notified || (o.kind && o.kind !== 'parcel') || !Number.isFinite(o.eta) || gnow < o.eta) continue;
             o.notified = true; ch = true;
             notify(s, `📦 Посылка для ${o.to} доставлена.`);
         }
@@ -1198,7 +1242,11 @@
                     else { s.attendance[o.key] = 'absent'; addWarning(s, `${ty === 'work' ? 'прогул на работе' : 'пропуск занятия'} — ${o.cl.subject}, ${fmtD(o.start)}`, ty); }
                 }
                 const ty2 = typeOf(o.cl);
-                if ((ty2 === 'work' || ty2 === 'study') && s.attendance[o.key] !== 'absent' && !s.tasks.some((t) => t.src === o.key) && Math.random() < (ty2 === 'work' ? 0.5 : 1)) { issueTask(s, o); ch = true; }
+                if ((ty2 === 'work' || ty2 === 'study') && s.attendance[o.key] !== 'absent'
+                    && !s.tasks.some((t) => t.src === o.key) && !(s.taskRolls || {})[o.key]) {
+                    (s.taskRolls ||= {})[o.key] = true; ch = true;
+                    if (Math.random() < (ty2 === 'work' ? 0.5 : 1)) issueTask(s, o);
+                }
             }
             // дедлайны
             for (const t of s.tasks) {
@@ -1207,7 +1255,7 @@
                 ch = true;
                 if (t.extra) { t.expired = true; notify(s, `⌛ Доп. задание «${t.title}» истекло.`); }
                 else if (t.penalty) { t.overdue = true; addStrike(s, `не выполнено взыскание — ${t.title}`, t.id); }
-                else { t.overdue = true; addWarning(s, `не выполнено вовремя — ${t.title}`, t.subject === 'учёба' ? 'study' : 'work'); }
+                else { t.overdue = true; addWarning(s, `не выполнено вовремя — ${t.title}`, t.work ? 'work' : 'study'); }
             }
             // долгое время низкий средний балл
             const g = rating(s);
@@ -1325,7 +1373,10 @@
                 if (th.pendingReply) scheduleDM(s, { from: who, intent: h.intent || h.text || 'откликнуться на действие' }, sp, base);
                 else scheduleReply(s, th, { initiate: `${base}\n${who} сам(а) пишет в личку, откликаясь именно на это действие.` });
             } else if (h.type === 'post') {
-                const txt = await aiText(`${base}\n\nТеперь ${who}${sp ? ` (${sp})` : ''} публикует пост в ленте CityHub, откликаясь на это. До 280 символов, живо, по-русски, только текст поста.`);
+                const voices = await voiceContext(s, [who]);
+                if (S() !== s) return;
+                const txt = await aiText(`${base}${voices}\n\nТеперь ${who}${sp ? ` (${sp})` : ''} публикует пост в ленте CityHub, откликаясь на это. До 280 символов, по-русски, только текст поста, строго в своей манере.`);
+                if (S() !== s) return;
                 if (!txt) return;
                 s.feed.unshift({ id: uid(), author: who, species: sp, channel: 'general', text: cleanMsg(txt).slice(0, 500), likes: 5 + Math.floor(Math.random() * 60), t: Date.now(), comments: [] });
                 notify(s, `📰 ${who} опубликовал(а) пост — кажется, это про вас`, 'important', { view: 'post', param: s.feed[0]?.id });
@@ -1342,8 +1393,12 @@
         }
     }
     /** Новые задания раз в день: генерирует ИИ, без повторов. */
+    const questJobs = new WeakSet();
     function refreshQuests(s) {
         const so = soc(s), day = dkey(NOW());
+        if (questJobs.has(s)) return false;
+        // A persisted loading flag has no running job after page reload.
+        if (so.questsLoading) { so.questsLoading = false; so.questDay = ''; }
         if (!hasStoryProgress()) { so.questsPendingOpening = true; return false; }
         if (mainGenerating) return false;
         const openingPending = so.questsPendingOpening;
@@ -1353,6 +1408,7 @@
         for (const q of so.quests) if (!openingPending && !q.done && q.k === 'rp') notify(s, `⌛ Задание «${q.t}» так и не выполнено.`, 'social');
         so.quests = [];
         so.questsLoading = true;
+        questJobs.add(s);
         enqueue(s, async () => {
             if (!hasStoryProgress() || mainGenerating) { so.questDay = ''; so.questsLoading = false; return; }
             const sourceKey = storyRevision(), epoch = storySyncEpoch;
@@ -1385,8 +1441,16 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (S() !== s || !hasStoryProgress() || storySyncEpoch !== epoch || storyRevision() !== sourceKey) { so.questDay = ''; so.questsLoading = false; return; }
             let list = (Array.isArray(r) ? r : []).map((q) => q && makeQuest(q, s)).filter(Boolean).slice(0, 3);
             if (!list.some((q) => q.k === 'rp') || list.length < 3) {
-                const pool = FALLBACK_QUESTS.filter((f) => !past.includes(f.title) && !list.some((q) => q.t === f.title));
-                while (list.length < 3 && pool.length) list.push(makeQuest(pool.splice(Math.floor(Math.random() * pool.length), 1)[0], s));
+                const available = FALLBACK_QUESTS.filter((f) => !list.some((q) => q.t === f.title));
+                const fresh = available.filter((f) => !past.includes(f.title));
+                const pool = fresh.length ? fresh : available;
+                if (!list.some((q) => q.k === 'rp')) {
+                    const rp = pool.find((f) => f.k === 'rp') || available.find((f) => f.k === 'rp');
+                    if (rp) { if (list.length === 3) list.pop(); list.push(makeQuest(rp, s)); }
+                }
+                const used = new Set(list.map((q) => q.t));
+                const fill = [...pool, ...available].filter((f) => !used.has(f.title) && used.add(f.title));
+                while (list.length < 3 && fill.length) list.push(makeQuest(fill.splice(Math.floor(Math.random() * fill.length), 1)[0], s));
             }
             if (so.hate >= 40) list.push({ id: uid(), k: 'redeem', t: 'Вернуть доверие', desc: 'Опубликуй пост, который сообщество примет хорошо.', n: 1, p: 0, done: false, r: { authority: 3, money: 0 } });
             for (const q of list) if (q.hook && q.trigger === 'now') fireHook(s, q, '');
@@ -1395,6 +1459,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (so.questHistory.length > 80) so.questHistory = so.questHistory.slice(-80);
             so.questsLoading = false;
             notify(s, `🎯 Новые задания дня: ${list.map((q) => q.t).join(', ')}`, 'social');
+        }).finally(() => {
+            questJobs.delete(s);
+            if (so.questsLoading) { so.questsLoading = false; so.questDay = ''; }
         });
         return true;
     }
@@ -1520,27 +1587,33 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         th.rel = clamp(before + clamp(Math.round(delta), -maxStep, maxStep), -100, 100);
         // запоминаем причину конфликта и момент примирения
         if (why && (delta <= -4 || th.rel <= -20)) {
-            if (!th.conflict) th.conflict = { why: String(why).slice(0, 220), t: NOW(), low: th.rel, source: 'dm' };
+            if (!th.conflict) {
+                th.reconciled = null;
+                th.conflict = { why: String(why).slice(0, 220), t: NOW(), low: th.rel, source: 'dm', storyIndex: (ctx().chat || []).length - 1, dmIndex: th.msgs.length - 1 };
+            }
             else th.conflict.low = Math.min(th.conflict.low ?? th.rel, th.rel);
         }
-        if (th.conflict && delta > 0 && th.rel >= (th.conflict.low ?? th.rel) + 15 && th.rel > -40) { th.reconciled = { why: th.conflict.why, t: NOW(), source: 'dm' }; th.conflict = null; notify(s, `🕊️ Вы с ${th.name} помирились.`, 'social', { view: 'thread', param: th.id }); }
+        // A positive delta changes closeness; it is not proof that a quarrel is over.
         if (flirt) th.flirt = (th.flirt || 0) + 1; else if (th.flirt) th.flirt = Math.max(0, th.flirt - 0.25);
-        if (before < 50 && th.rel >= 50) { notify(s, `🤝 Вы с ${th.name} теперь друзья`, 'social', { view: 'thread', param: th.id }); questEvent(s, 'friend'); }
+        if (before < 50 && th.rel >= 50 && !th.conflict) { notify(s, `🤝 Вы с ${th.name} теперь друзья`, 'social', { view: 'thread', param: th.id }); questEvent(s, 'friend'); }
         if (!th.beef && th.rel <= -60 && th.kind !== 'char') {
             th.beef = true;
+            th.beefPublic = false;
             enqueue(s, async () => {
                 const voices = await voiceContext(s, [th.name], { includeChar: false });
                 if (S() !== s) return;
                 const x = await aiJSON(`${world(s)}${voices}\n\n${th.name}${th.species ? ` (${th.species})` : ''} поссорился(ась) с ${s.profile.name} в личке и реагирует на конфликт в ленте CityHub строго в собственной манере. Пиши претензию, холодную реплику или намёк только как свойственно этому человеку; не навязывай язвительность. Если по характеру он не стал бы публиковать такое, верни text пустым. Последние сообщения:\n${th.msgs.slice(-6).map((m) => `${m.me ? s.profile.name : th.name}: ${m.text}`).join('\n')}\nФормат: {"text":"до 280 символов","media":"пусто или описание скриншота переписки"}`);
                 if (S() !== s) return;
                 if (x?.text) {
+                    if (!th.beef || th.rel > -20) return;
+                    th.beefPublic = true;
                     s.feed.unshift({ id: uid(), author: th.name, species: th.species || '', channel: 'general', text: cleanMsg(x.text).slice(0, 500), media: String(x.media || '').slice(0, 200), kind: 'photo', likes: 30 + Math.floor(Math.random() * 300), t: Date.now(), comments: [], story: `Бифф: ${th.name} против ${s.profile.name}` });
                     soc(s).hate = clamp(soc(s).hate + 10, 0, 100);
                     notify(s, `⚔️ Бифф с ${th.name}! Конфликт выплеснулся в ленту.`, 'warn', { view: 'thread', param: th.id });
                 }
             });
         }
-        if (th.beef && th.rel > -20) th.beef = false;
+        if (th.beef && th.rel > -20) { th.beef = false; th.beefPublic = false; }
     }
     /** Кто не знаком нам по лору и не мелькал в истории — синхронизировать нечего. */
     function relevantForSync(s, th) {
@@ -1552,11 +1625,30 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     }
     function needsRelSync(s, th) {
         if (th.relSyncing || !relevantForSync(s, th)) return false;
-        return th.relStoryRevision !== storyRevision() || th.relPolicyVersion !== 3 || th.relCardRevision !== relationCardKey(s, th);
+        return th.relStoryRevision !== storyRevision() || th.relPolicyVersion !== 4 || th.relCardRevision !== relationCardKey(s, th);
     }
     /** Определяет текущие отношения по карточке, основной истории и переписке (история важнее карточки). */
+    const RECONCILIATION_RE = /помирил|примирил|простил|простила|прощаю|обиды? (?:больше )?не держ|конфликт (?:уладил|разреш|исчерпан)|ссор[ау] (?:забыли|закончили)|\b(?:reconciled|made up|forgive you|forgave|resolved (?:our|their|the) conflict)\b/iu;
+    function conflictProof(s, th, change) {
+        if (change?.state !== 'resolved') return null;
+        const evidence = quoteText(change.evidence);
+        if (!RECONCILIATION_RE.test(evidence) || /не (?:помир|простил|простила)|не могу простить|если|когда-нибудь|\b(?:not|never|would|could|if)\b/iu.test(evidence)) return null;
+        const proof = pairQuote(s, th, change.source, evidence, true);
+        const index = change.source === 'story' ? th.conflict?.storyIndex : th.conflict?.dmIndex;
+        return proof && (index === undefined || proof.index > index) ? proof : null;
+    }
+    function finishConflict(s, th, proof) {
+        th.reconciled = { why: th.conflict.why, t: NOW(), source: proof.source, evidence: proof.evidence,
+            previousConflict: { ...th.conflict }, previousBeef: !!th.beef, previousBeefPublic: th.beefPublic };
+        th.conflict = null; th.beef = false; th.beefPublic = false;
+    }
     async function syncRel(s, th) {
         if (th.relSyncing) return;
+        const old = th.reconciled;
+        if (!th.conflict && old?.previousConflict && !pairQuote(s, th, old.source, old.evidence)) {
+            th.conflict = { ...old.previousConflict }; th.beef = old.previousBeef; th.beefPublic = old.previousBeefPublic;
+            th.reconciled = null; save(s);
+        }
         const revision = storyRevision(), epoch = storySyncEpoch;
         const cardRevision = relationCardKey(s, th);
         const dmRevision = hash(JSON.stringify(th.msgs));
@@ -1571,7 +1663,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 ? `${charCard()}${field(ch, 'first_mes') ? `\nПервое сообщение истории: ${macros(field(ch, 'first_mes'))}` : ''}`
                 : `${th.name}${th.species ? ` (${th.species})` : ''}. ${th.bio || ''}${lp ? ` Из лора: ${lp.bio}${lp.relation ? `; для ${c.name2}: ${lp.relation}` : ''}.` : ''}`;
             const dms = th.msgs.filter((m) => !m.sys).slice(-10).map((m) => `${m.me ? s.profile.name : th.name}: ${m.text}`).join('\n');
-            const r = await aiJSON(`${about}\n\n${fact ? `Подтверждённый исходный факт из ПОЛНОЙ карточки: «${macros(fact.evidence)}». Это относится к ${s.profile.name}; имя персоны ${c.name1} и имя профиля CityHub обозначают одного пользователя. Они уже знакомы и являются парой. Отсутствие переписки, работы вместе, упоминания романтики в последних сообщениях, обычная ссора, занятость или физическое расстояние этот факт не отменяют.` : ''}${th.pairMemory ? `\nПоследнее подтверждённое изменение отношений: ${th.pairMemory.pair ? 'пара' : 'расстались'}, «${th.pairMemory.evidence}».` : ''}\n\nПоследние события основной истории:\n${recentStory(20) || '(истории пока нет)'}\n\nПереписка в CityHub:\n${dms || '(не переписывались)'}\n\nОпредели, какие СЕЙЧАС отношения у ${th.name} с ${s.profile.name}. Карточка задаёт исходные отношения; продолжение истории и переписка меняют их только при явных событиях, а не при отсутствии упоминаний. Если в карточке пользователь — девушка, парень или супруг персонажа, known:true и pair:true сохраняются до явно состоявшегося расставания/развода. Пример: полицейский на патруле по-прежнему может иметь девушку. Опирайся на факты: состоявшиеся изменения истории и переписки важнее исходной карточки — если по карточке они не знакомы, а в истории уже подружились или начали встречаться, верь истории. Если они ещё ни разу не общались и не знакомы — known: false.\nВ cardRelationship отдельно укажи исходную пару из description/personality/scenario: pair:true только если явно сказано, что именно пользователь и этот персонаж уже встречаются/супруги; evidence — точная цитата факта из карточки с именем пользователя. Предпочтения, чужие и бывшие отношения, желания и примеры речи не являются подтверждением. При отсутствии такого факта pair:false и evidence пустая строка.\nВ pairChange верни последнее явно СОСТОЯВШЕЕСЯ изменение романтического статуса именно этих двух людей: state=together (стали/снова стали парой), apart (расстались/развелись), unchanged (такого события нет). source=story или dm, evidence=дословная цитата события из соответствующего текста, не менее 12 символов. Не путай физическую разлуку, ссору, просьбу/предложение встречаться, гипотезы и историю отношений с другими людьми с изменением этой пары. Для unchanged evidence пустая строка. Статус пары не равен настроению или баллу близости.\nТакже оцени доступность ${th.name} для мессенджера ПО ФАКТАМ текущей сцены: сон, вождение, работа, занятие, операция, бой и другие дела, не позволяющие переписываться. Не считай занятой всю профессию постоянно; если человек просто разговаривает, гуляет или отдыхает, busy:false. В presence верни busy (boolean), reason (короткую причину), until (ГГГГ-ММ-ДД ЧЧ:ММ только если конец занятности явно известен, иначе null).\nФормат: {"known":true,"rel":число от −100 (вражда) до 100 (самые близкие),"status":"короткий статус по-русски: не знакомы, знакомые, приятели, друзья, близкие друзья, флирт, пара, соперники, неприязнь, вражда…","pair":true если они сейчас в романтических отношениях,"note":"одной фразой, на чём основан вывод","cardRelationship":{"pair":false,"evidence":""},"pairChange":{"state":"unchanged","source":"story","evidence":""},"presence":{"busy":false,"reason":"","until":null}}`);
+            const r = await aiJSON(`${about}\n\n${th.conflict ? `Сохранённая неразрешённая ссора: ${th.conflict.why}. Отсутствие этой темы в последних сообщениях и вежливость не означают примирения. ` : ''}${fact ? `Подтверждённый исходный факт из ПОЛНОЙ карточки: «${macros(fact.evidence)}». Это относится к ${s.profile.name}; имя персоны ${c.name1} и имя профиля CityHub обозначают одного пользователя. Они уже знакомы и являются парой. Отсутствие переписки, работы вместе, упоминания романтики в последних сообщениях, обычная ссора, занятость или физическое расстояние этот факт не отменяют.` : ''}${th.pairMemory ? `\nПоследнее подтверждённое изменение отношений: ${th.pairMemory.pair ? 'пара' : 'расстались'}, «${th.pairMemory.evidence}».` : ''}\n\nПоследние события основной истории:\n${recentStory(20) || '(истории пока нет)'}\n\nПереписка в CityHub:\n${dms || '(не переписывались)'}\n\nОпредели, какие СЕЙЧАС отношения у ${th.name} с ${s.profile.name}. Карточка задаёт исходные отношения; продолжение истории и переписка меняют их только при явных событиях, а не при отсутствии упоминаний. Если в карточке пользователь — девушка, парень или супруг персонажа, known:true и pair:true сохраняются до явно состоявшегося расставания/развода. Пример: полицейский на патруле по-прежнему может иметь девушку. Опирайся на факты: состоявшиеся изменения истории и переписки важнее исходной карточки — если по карточке они не знакомы, а в истории уже подружились или начали встречаться, верь истории. Если они ещё ни разу не общались и не знакомы — known: false.\nВ cardRelationship отдельно укажи исходную пару из description/personality/scenario: pair:true только если явно сказано, что именно пользователь и этот персонаж уже встречаются/супруги; evidence — точная цитата факта из карточки с именем пользователя. Предпочтения, чужие и бывшие отношения, желания и примеры речи не являются подтверждением. При отсутствии такого факта pair:false и evidence пустая строка.\nВ pairChange верни последнее явно СОСТОЯВШЕЕСЯ изменение романтического статуса именно этих двух людей: state=together (стали/снова стали парой), apart (расстались/развелись), unchanged (такого события нет). source=story или dm, evidence=дословная цитата события из соответствующего текста, не менее 12 символов. Не путай физическую разлуку, ссору, просьбу/предложение встречаться, гипотезы и историю отношений с другими людьми с изменением этой пары. Для unchanged evidence пустая строка. Статус пары не равен настроению или баллу близости.\nВ conflictChange укажи state=resolved только при явно состоявшемся примирении именно ${th.name} с ${s.profile.name}: source=story или dm, evidence=точная цитата события (не менее 12 символов). Простой рост близости, вежливый ответ, извинение без принятия и отсутствие темы ссоры — state=unchanged с пустой цитатой. Сохранённая ссора действует до подтверждённого примирения.\nТакже оцени доступность ${th.name} для мессенджера ПО ФАКТАМ текущей сцены: сон, вождение, работа, занятие, операция, бой и другие дела, не позволяющие переписываться. Не считай занятой всю профессию постоянно; если человек просто разговаривает, гуляет или отдыхает, busy:false. В presence верни busy (boolean), reason (короткую причину), until (ГГГГ-ММ-ДД ЧЧ:ММ только если конец занятности явно известен, иначе null).\nФормат: {"known":true,"rel":число от −100 (вражда) до 100 (самые близкие),"status":"короткий статус по-русски: не знакомы, знакомые, приятели, друзья, близкие друзья, флирт, пара, соперники, неприязнь, вражда…","pair":true если они сейчас в романтических отношениях,"note":"одной фразой, на чём основан вывод","cardRelationship":{"pair":false,"evidence":""},"pairChange":{"state":"unchanged","source":"story","evidence":""},"conflictChange":{"state":"unchanged","source":"story","evidence":""},"presence":{"busy":false,"reason":"","until":null}}`);
             if (S() !== s || epoch !== storySyncEpoch || revision !== storyRevision()
                 || cardRevision !== relationCardKey(s, th) || dmRevision !== hash(JSON.stringify(th.msgs)) || !r || typeof r !== 'object' || Array.isArray(r)) return;
             const basis = fact || modelCardPairFact(s, th, r);
@@ -1587,9 +1679,14 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                     if (th.conflict?.source !== 'dm') th.conflict = null;
                     if (th.reconciled?.source !== 'dm') th.reconciled = null;
                 }
-                if (th.rel > -10 && th.conflict) { th.reconciled = { why: th.conflict.why, t: NOW(), source: 'story' }; th.conflict = null; }
-                if (th.rel <= -20) th.conflict = { t: NOW(), low: th.rel, ...th.conflict,
-                    why: cleanMsg(r.note || 'конфликт в истории').slice(0, 220), source: 'story' };
+                const reconciliation = th.conflict ? conflictProof(s, th, r.conflictChange) : null;
+                if (th.conflict && reconciliation) finishConflict(s, th, reconciliation);
+                if (th.rel <= -20 && !reconciliation) {
+                    if (!th.conflict) th.reconciled = null;
+                    th.conflict = { t: NOW(), low: th.rel,
+                        storyIndex: (ctx().chat || []).length - 1, dmIndex: th.msgs.length - 1, ...th.conflict,
+                        why: cleanMsg(r.note || 'конфликт в истории').slice(0, 220), source: 'story' };
+                }
             }
             th.status = th.known ? cleanMsg(r.status || '').slice(0, 30).toLowerCase() : 'не знакомы';
             th.relNote = cleanMsg(r.note || '').slice(0, 200);
@@ -1600,7 +1697,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (resolved.evidence && (rejectedUnknown || (r.pair === true || r.pair === 'true') !== th.pair)) th.relNote = `${th.pair ? 'Пара' : 'Отношения завершены'}: ${macros(resolved.evidence)}`.slice(0, 300);
             th.relSyncLen = (ctx().chat || []).length;
             th.relStoryRevision = revision;
-            th.relPolicyVersion = 3;
+            th.relPolicyVersion = 4;
             th.relCardRevision = cardRevision;
             th.relStoryAccepted = !opening;
             if (!opening && th.kind === 'char' && th.pair !== !!s.profile.relWithChar) {
@@ -1669,6 +1766,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 enqueue(s, async () => {
                     if (!await mayReceivePersonal(s, ct)) return;
                     const txt = await aiText(`${world(s)}\n${charCard()}\n\n${ct.name} и ${s.profile.name} — пара. ${ct.name} только что узнал(а), что ${s.profile.name} пошёл(пошла) на свидание с ${m.with}: ${how}. Напиши сообщение ${ct.name} в мессенджере CityHub строго в характере персонажа (ревность, обида, холод, злость, требование объяснений — как ему/ей свойственно). 1–3 предложения, только текст.`);
+                    if (S() !== s) return;
                     if (txt && await mayReceivePersonal(s, ct)) { ct.msgs.push({ me: false, text: cleanMsg(txt).slice(0, 600), t: NOW() }); ct.unread = (ct.unread || 0) + 1; ct.t = NOW(); }
                 });
             }
@@ -1907,13 +2005,13 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             const key = `${r.type}|${r.desc}`.slice(0, 120);
             if ((s.crimeSeen || []).includes(key)) return;
             (s.crimeSeen ||= []).push(key); if (s.crimeSeen.length > 30) s.crimeSeen.shift();
-            if (Math.random() < clamp(+r.caught || 0.5, 0.05, 1)) addStrike(s, `${cleanMsg(r.type)}: ${cleanMsg(r.desc)}`, null, +r.weight || 1);
+            if (Math.random() < clamp(Number.isFinite(+r.caught) && r.caught !== null ? +r.caught : 0.5, 0, 1)) addStrike(s, `${cleanMsg(r.type)}: ${cleanMsg(r.desc)}`, null, +r.weight || 1);
             else notify(s, `🤫 Кажется, никто не заметил: ${cleanMsg(r.type)}… пока.`, 'social');
             save(s);
         } catch (e) { logErr('Проверка правонарушений', e); } finally { crimeBusy = false; }
     }
     function onStoryReply(s = S(), last = (ctx().chat || []).slice(-1)[0]) {
-        if (!s || !s.auth || !last || last.is_user || last.is_system) return;
+        if (!s || !s.auth || !last || last.is_user || last.is_system || !String(last.mes || '').trim()) return;
         s.replyCount = (s.replyCount || 0) + 1;
         scanCrimes(s);
         for (const o of s.orders) {
@@ -1949,6 +2047,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         if (snapshot.align) {
             const revision = storyRevision();
             const r = await aiJSON(`Последние события основной истории:\n${recentStory(12)}\n\nОпредели ТЕКУЩИЕ дату и время сцены, а не время встречи или воспоминания. Если часы известны из чата, верни explicit:true. Если время определить невозможно, ПРИДУМАЙ правдоподобное начальное игровое время с учётом сцены (утро, день, вечер или ночь), верни explicit:false и обязательно укажи time. Не выбирай случайно новое время для каждого сообщения: это только установка начальных часов истории.\nФормат: {"explicit":true или false,"date":"ГГГГ-ММ-ДД если дата известна из чата, иначе null","time":"ЧЧ:ММ"}`);
+            if (S() !== s) return;
             if (!current() || revision !== storyRevision()) return;
             if (!syncStoryClock(s) && s.clock.t === clockAtStart) {
                 const ts = r?.explicit === true ? parseClockStamp(r.date, r.time, base) : null;
@@ -1961,6 +2060,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         if (c.syncAI) {
             const text = String(snapshot.message.mes || '').replace(/<[^>]+>/g, ' ').slice(-2500);
             const r = await aiJSON(`Часы истории перед этим ответом: ${fmtFull(base)}.\nНовое сообщение истории:\n${text}\n\nОпредели, сколько времени прошло в истории за это сообщение. Если в тексте явно названы текущие дата/время или переход («наступило утро», «через час», «в 18:00», «на следующий день») — учти это. Время будущей встречи и воспоминания не являются текущим временем. Обычный диалог без переходов — 1–15 минут.\nФормат: {"minutes":число прошедших минут от 0 до 1440,"date":"ГГГГ-ММ-ДД только если текущая дата явно названа, иначе null","time":"ЧЧ:ММ если текст явно называет текущее время, иначе null","nextDay":true если явно наступил следующий день}`);
+            if (S() !== s) return;
             if (!current()) return;
             // Horae мог обновиться позже ответа или пользователь мог выставить время вручную.
             if (syncStoryClock(s)) { remember(); return; }
@@ -1993,7 +2093,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     const storySessions = new WeakMap();
     const storyMessageId = (m, i) => `${m.send_date || m.gen_started || i}:${m.name || ''}`;
     const storyMessageKey = (m) => `${m.swipe_id ?? ''}:${hash(String(m.mes || ''))}`;
-    const relationAttemptKey = (th, revision, s) => `${revision}:3:${relationCardKey(s, th)}:${hash(JSON.stringify(th.msgs))}`;
+    const relationAttemptKey = (th, revision, s) => `${revision}:4:${relationCardKey(s, th)}:${hash(JSON.stringify(th.msgs))}`;
     function storyRevision() {
         const c = ctx();
         return String(hash(JSON.stringify([c.name1, c.name2, (c.chat || []).map((m) =>
@@ -2065,7 +2165,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 session.queued = false;
                 if (S() === s && (session.dirty || session.replies.size)) scheduleStorySync();
             }
-        });
+        }).finally(() => { session.queued = false; });
     }
     /** Объединяет близкие события; запросы к ИИ запускаются только при изменении истории. */
     function observeStory(receivedId = null) {
@@ -2078,7 +2178,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         if (changed) { session.dirty = true; lastKey = ''; }
         const chat = ctx().chat || [];
         if (changed && !first && gameMode(s)) {
-            const ids = new Set(chat.filter((m) => m && !m.is_user && !m.is_system).map((m) => storyMessageId(m, chat.indexOf(m))));
+            const ids = new Set(chat.map((m, i) => m && !m.is_user && !m.is_system ? storyMessageId(m, i) : null).filter(Boolean));
             const records = s.storyClockHistory || [];
             // Удаление последних ответов отменяет их шаг времени, но не ручную установку часов.
             while (records.length) {
@@ -2225,6 +2325,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     async function extractLorePeople(s) {
         const c = ctx();
         const lore = await loreText(null);
+        if (S() !== s) return;
         const card = charCard();
         const r = await aiJSON(`${card}\n\nЛор (лорбук):\n${lore || '(нет)'}\n\nВыпиши всех упомянутых конкретных персонажей, кроме пользователя ${s.profile.name}: основного персонажа ${c.name2}, родителей, родственников, друзей, соседей, коллег, начальников — всех жителей города. Если в имени карточки указано только имя, а в описании или лоре есть полное имя того же персонажа, сохрани полное имя. Не придумывай отсутствующую фамилию. Если людей с этим именем несколько, выпиши каждого с его фамилией, не назначай одному из них короткое имя без явной связи в источнике. Для каждого: role — "adult" (18 и старше) или "minor" (младше 18 — школьники, дети); age — возраст числом, если понятен; profession — профессия или занятие.
 Один человек — одна запись, даже если имя написано на разных языках. aliases — только явно указанные в карточке/лоре другие написания имени того же человека; не включай однофамильцев и не придумывай псевдонимы.\nФормат: [{"name":"имя как в лоре","aliases":["другое написание, если указано"],"role":"adult","age":45,"profession":"","bio":"характер и важное, 1–2 предложения","relation":"кем приходится ${c.name2}"}]. Если никого нет — пустой массив.`);
@@ -2269,6 +2370,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     /** Клубы, мероприятия и традиции университета, описанные в лорбуке и карточке. */
     async function extractCampusLore(s) {
         const lore = await loreText(/клуб|секци|кружок|обществ|команд|мероприят|праздник|бал|фестивал|турнир|концерт|вечеринк|традици|ярмарк|club|event|society|festival|party|tradition/i);
+        if (S() !== s) return;
         s.campusLoreAt = Date.now();
         if (!lore) { save(s); return 0; }
         const r = await aiJSON(`${world(s)}\n\nЛор (лорбук и карточка):\n${lore}\n\nВыпиши ТОЛЬКО то, что реально упомянуто в лоре: клубы, секции и сообщества города, а также городские мероприятия, праздники и традиции. Ничего не придумывай; если чего-то нет — пустой массив.\nФормат: {"clubs":["название"],"events":[{"title":"","when":"когда проходит","place":"","desc":"одно предложение"}]}`);
@@ -2318,7 +2420,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         }
         const others = s.threads.filter((t) => t.kind === 'dm' && t.msgs.some((m) => m.me) && (t.conflict || t.beef || (t.rel || 0) >= 50 || ((t.flirt || 0) >= 3 && (t.rel || 0) >= 40))).slice(0, 5);
         if (!opening && others.length) L.push(`Для рассказчика — отношения ${p.name} с другими жителями по CityHub (учитывай, только если этот человек появится в сцене; ${ctr ? ctr.name : 'другие персонажи'} об этом не знает, если не был свидетелем и ему не рассказали): ${others.map((t) => `${t.name} — ${t.conflict || t.beef ? `в ссоре с ${p.name}${t.conflict ? ` (${t.conflict.why})` : ''}` : relLabel(t)}`).join('; ')}.`);
-        const beefs = s.threads.filter((t) => t.beef);
+        const beefs = s.threads.filter((t) => t.beef && (t.beefPublic === true || (t.beefPublic === undefined
+            && s.feed.some((post) => post.story === `Бифф: ${t.name} против ${s.profile.name}`))));
         if (!opening && beefs.length) L.push(`Общеизвестно в городе: публичный бифф в CityHub между ${p.name} и ${beefs.map((t) => t.name).join(', ')} — жители это обсуждают, об этом может знать кто угодно.`);
         const arriving = s.orders.filter((o) => (o.kind === 'food' || o.kind === 'grocery' || o.kind === 'service') && o.stage !== 'delivered' && (o.dueReply !== undefined ? (s.replyCount || 0) + 1 >= o.dueReply : Date.now() >= o.eta));
         if (arriving.length) {
@@ -2359,10 +2462,12 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     const ui = { deliveryTab: 'food', gcat: 'all', open: false, tab: 'feed', view: null, param: null, studyTab: 'schedule', marketTab: 'buy', channel: 'all', diet: 'all', mcat: 'all', schedDay: null, busy: '' };
     let lastKey = '';
 
+    let busyTask = null;
     async function withBusy(label, fn) {
         if (ui.busy) { toast('info', 'Подождите, предыдущий запрос ещё выполняется.'); return; }
         ui.busy = label; render();
-        try { return await fn(); } finally { ui.busy = ''; render(); }
+        const task = {}; busyTask = task;
+        try { return await fn(); } finally { if (busyTask === task) { busyTask = null; ui.busy = ''; render(); } }
     }
 
     /* ───────────────────────── UI: разметка ───────────────────────── */
@@ -3049,27 +3154,32 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     const CAR_CLASS = { econ: ['Эконом', 250], comfort: ['Комфорт', 400], business: ['Бизнес', 700], premium: ['Премиум', 1100], lux: ['Люкс', 2000], sport: ['Спорткар', 3500] };
     const CLOTHES_TIER = { mass: ['Масс-маркет', 300], mid: ['Средний сегмент', 1200], premium: ['Премиум', 4000], lux: ['Люкс', 15000] };
     const OCCASIONS = ['Свидание', 'День рождения', 'Годовщина', 'Деловой ужин', 'Встреча с друзьями', 'Просто так'];
-    const dayOf = (v) => { const [y, m, d] = String(v || '').split('-').map(Number); return y ? new Date(y, m - 1, d).getTime() : NaN; };
+    const dayOf = (v) => {
+        const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(String(v || ''));
+        if (!match) return NaN;
+        const [, y, m, d] = match.map(Number), date = new Date(y, m - 1, d);
+        return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d ? date.getTime() : NaN;
+    };
     const nightsOf = (a, b) => Math.max(0, Math.round((dayOf(b) - dayOf(a)) / DAY));
     const hashN = (str, lo, hi) => lo + (hash(String(str).toLowerCase()) % (hi - lo + 1));
     const isoDate = (ts) => isoDay(ts);
     /** Считывает форму и возвращает детали брони: цену, описание, время начала или ошибку. */
     function bookingDraft(s) {
         const t = ui.bk || 'room', v = (id) => val(`sh-bk-${id}`);
-        const at = (d, hh = 12) => { const x = dayOf(d); return Number.isFinite(x) ? x + hh * HOUR : NaN; };
+        const at = (d, hh = 12) => { const x = new Date(dayOf(d)); x.setHours(hh, 0, 0, 0); return x.getTime(); };
         const dates = () => { const n = nightsOf(v('in'), v('out')); return n > 0 ? n : 0; };
         switch (t) {
             case 'room': { const when = new Date(v('when')).getTime(); const store = /склад/i.test(v('room')); return { price: store ? 500 : 300, title: `${v('room')}`, start: when, need: !when && 'Выберите дату и время.' }; }
             case 'hotel': { const n = dates(), st = +v('stars') || 3; return { price: n * HOTEL_STARS[st], title: `Отель ${st}★, ${v('city') || 'свой город'}: ${n} ноч.`, start: at(v('in'), 14), end: at(v('out'), 12), need: !n && 'Выберите даты заезда и выезда.' }; }
             case 'flat': {
-                const rooms = +v('rooms') || 1, city = v('fcity') === 'other' ? (v('city') || 'другой город') : 'свой город', rent = v('deal') !== 'buy';
+                const rooms = v('rooms') === '' ? 1 : clamp(Math.round(+v('rooms') || 0), 0, 5), city = v('fcity') === 'other' ? (v('city') || 'другой город') : 'свой город', rent = v('deal') !== 'buy';
                 if (rent) { const n = dates(); return { price: n * (300 + 200 * rooms), title: `Аренда квартиры (${rooms === 0 ? 'студия' : `${rooms}-комн.`}), ${city}: ${n} ноч.`, start: at(v('in'), 15), end: at(v('out'), 12), owner: true, need: !n && 'Выберите даты вселения и выселения.' }; }
                 return { price: 150000 + rooms * 120000, title: `Покупка квартиры (${rooms === 0 ? 'студия' : `${rooms}-комн.`}), ${city}`, start: NOW() + 2 * DAY, owner: true, buy: true };
             }
             case 'resort': { const n = dates(), ty = RESORT_TYPES[v('rtype')] || RESORT_TYPES.glamping, lo = RESORT_LOC[v('rloc')] || RESORT_LOC.nature; return { price: Math.round(n * ty[1] * lo[1]), title: `База отдыха: ${ty[0]} ${lo[0]}, ${n} ноч.`, start: at(v('in'), 15), end: at(v('out'), 12), owner: true, easy: true, need: !n && 'Выберите даты заезда и выезда.' }; }
-            case 'flight': { const cl = FLIGHT_CLASS[v('class')] || FLIGHT_CLASS.econ, dest = v('dest'), back = v('ret'); const base = dest ? hashN(dest, 1500, 8000) : 0; return { price: Math.round(base * cl[1] * (back ? 1.9 : 1)), title: `Авиабилет ${cl[0].toLowerCase()} — ${dest || '…'}${back ? ` (туда ${fmtDay(dayOf(v('dep')))}, обратно ${fmtDay(dayOf(back))})` : ''}`, start: at(v('dep'), 10), need: (!dest && 'Укажите, куда летите.') || (!Number.isFinite(dayOf(v('dep'))) && 'Выберите дату вылета.') }; }
+            case 'flight': { const cl = FLIGHT_CLASS[v('class')] || FLIGHT_CLASS.econ, dest = v('dest'), back = v('ret'); const base = dest ? hashN(dest, 1500, 8000) : 0; return { price: Math.round(base * cl[1] * (back ? 1.9 : 1)), title: `Авиабилет ${cl[0].toLowerCase()} — ${dest || '…'}${back ? ` (туда ${fmtDay(dayOf(v('dep')))}, обратно ${fmtDay(dayOf(back))})` : ''}`, start: at(v('dep'), 10), need: (!dest && 'Укажите, куда летите.') || (!Number.isFinite(dayOf(v('dep'))) && 'Выберите дату вылета.') || (back && (!Number.isFinite(dayOf(back)) || dayOf(back) < dayOf(v('dep'))) && 'Обратный вылет не может быть раньше вылета туда.') }; }
             case 'photo': { const h = clamp(+v('hours') || 1, 1, 8), when = new Date(v('when')).getTime(); return { price: h * 400, title: `Фотостудия на ${h} ч`, start: when, need: !when && 'Выберите дату и время.' }; }
-            case 'car': { const n = Math.max(1, dates()), cl = CAR_CLASS[v('cclass')] || CAR_CLASS.econ; return { price: n * cl[1], title: `Каршеринг: ${cl[0].toLowerCase()}, ${n} дн.`, start: at(v('in'), 10), end: at(v('out'), 10), need: !Number.isFinite(dayOf(v('in'))) && 'Выберите даты.' }; }
+            case 'car': { const n = dates(), cl = CAR_CLASS[v('cclass')] || CAR_CLASS.econ; return { price: n * cl[1], title: `Каршеринг: ${cl[0].toLowerCase()}, ${n} дн.`, start: at(v('in'), 10), end: at(v('out'), 10), need: !n && 'Выберите даты: возврат должен быть позже получения.' }; }
             case 'clothes': { const ti = CLOTHES_TIER[v('tier')] || CLOTHES_TIER.mass; return { price: ti[1], title: `Бронь одежды (${ti[0].toLowerCase()}): ${v('what') || 'образ'}`, start: at(v('day'), 12), need: !Number.isFinite(dayOf(v('day'))) && 'Выберите дату примерки.' }; }
             case 'tour': { const ppl = clamp(+v('ppl') || 1, 1, 10), where = v('where'); return { price: ppl * (where ? hashN(where, 300, 1500) : 0), title: `Экскурсия: ${where || '…'}, ${ppl} чел.`, start: at(v('day'), 11), need: (!where && 'Укажите, куда экскурсия.') || (!Number.isFinite(dayOf(v('day'))) && 'Выберите дату.') }; }
             case 'table': { const g = clamp(+v('guests') || 2, 1, 20), occ = v('occ') || 'Просто так', when = new Date(v('when')).getTime(); return { price: g * 250 + (/рожд|годовщ/i.test(occ) ? 300 : 0), title: `Столик${v('rest') ? ` в «${v('rest')}»` : ''} на ${g} — ${occ.toLowerCase()}`, start: when, need: !when && 'Выберите дату и время.' }; }
@@ -3185,7 +3295,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.25 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.26 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -3295,7 +3405,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     function detectMeet(s, th, mt) {
         const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(mt.date || '').trim());
         const tm = /^(\d{1,2}):(\d{2})$/.exec(String(mt.time || '').trim());
-        if (!dm || !tm) return;
+        if (!dm || !tm || !TIME_RE.test(String(mt.time).trim()) || !Number.isFinite(dayOf(mt.date))) return;
         const at = new Date(+dm[1], +dm[2] - 1, +dm[3], +tm[1], +tm[2]).getTime();
         if (!(at > NOW()) || at > NOW() + 7 * DAY) return;
         if (s.meetings.some((m) => m.threadId === th.id && (m.status === 'accepted' || m.status === 'started') && Math.abs(m.at - at) < 2 * HOUR)) return;
@@ -3511,7 +3621,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 ? `${th.name} — персонажа текущей истории. Строго сохраняй его характер, отношение к ${s.profile.name}, манеру речи и словечки из карточки и примеров; учитывай события истории. Пиши так, как этот персонаж писал бы в мессенджере.`
                 : `${th.name}${th.species ? ` (вид: ${th.species})` : ''}${th.bio ? `. О себе: ${th.bio}` : ''}`;
         const relTxt = th.kind === 'group' ? '' : `\nОтношение ${th.name} к ${s.profile.name}: ${relLabel(th)} (${Math.round(th.rel || 0)} из 100, шкала от −100 вражда до 100 близость).${th.relNote ? ` ${th.relNote}` : ''}${relLabel(th) === 'не знакомы' ? ` Они не знакомы — ${th.name} пишет как незнакомому человеку.` : ''}${th.kind === 'char' && s.profile.relWithChar ? ` ${th.name} и ${s.profile.name} — пара.` : ''}${jealousNote(s, th)}`;
-        const raw = await aiRaw(`${world(s)}${extra}${relTxt}\n\nЭто переписка в защищённом мессенджере CityHub. Ты отвечаешь за ${who}\n\nИстория переписки:\n${hist || '(переписки ещё не было)'}\n\n${opts.initiate ? `${opts.initiate}\n\n` : ''}Напиши следующее сообщение собеседника: 1–3 предложения, живо, в стиле мессенджера, по-русски. Реагируй на вид и способности ${s.profile.name} по правилам выше — особенно в начале знакомства, но не в каждом сообщении. Отношения развиваются естественно: грубость портит, забота, юмор и флирт сближают; возможны дружба, роман или вражда.${th.kind === 'group' ? '' : `\nСейчас ${new Date(NOW()).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} (сегодня ${isoDay(NOW())}).\nОтветь JSON: {"reply":"текст сообщения","delta":число от −6 до 6 — как последнее сообщение ${s.profile.name} изменило отношение,"flirt":true если в переписке сейчас флирт, иначе false,"meet":null}\nПоле meet заполняй, ТОЛЬКО если с учётом твоего ответа вы с ${s.profile.name} явно договорились встретиться и понятны день и время: {"date":"ГГГГ-ММ-ДД","time":"ЧЧ:ММ","kind":"date — свидание, friends — дружеская встреча, study — учёба","place":"break — на перемене, after — после пар, skip — вместо пар, dorm — в общежитии, cafe — в кафе города, city — в городе","note":"где именно, коротко"}. Если лишь обсуждаете или время не названо — null.\nЕсли ${s.profile.name} говорит, что в назначенное время у неё/него пара, отреагируй строго в характере персонажа: кто-то подначивает прогулять («да брось, одна пара ничего не решит»), кто-то сразу соглашается перенести и предлагает другое время, кто-то обижается или ворчит. Заполняй meet только когда договорённость снова окончательная: новое время, либо прежнее с place "skip", если ${s.profile.name} согласился(ась) прогулять.`}`);
+        const raw = await aiRaw(`${world(s)}${extra}${relTxt}\n\nЭто переписка в защищённом мессенджере CityHub. Ты отвечаешь за ${who}\n\nИстория переписки:\n${hist || '(переписки ещё не было)'}\n\n${opts.initiate ? `${opts.initiate}\n\n` : ''}Напиши следующее сообщение собеседника: 1–3 предложения, живо, в стиле мессенджера, по-русски. Реагируй на вид и способности ${s.profile.name} по правилам выше — особенно в начале знакомства, но не в каждом сообщении. Отношения развиваются естественно: грубость портит, забота, юмор и флирт сближают; возможны дружба, роман или вражда.${th.kind === 'group' ? '' : `\nСейчас ${new Date(NOW()).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} (сегодня ${isoDay(NOW())}).\nОтветь JSON: {"reply":"текст сообщения","delta":число от −6 до 6 — как последнее сообщение ${s.profile.name} изменило отношение,"flirt":true если в переписке сейчас флирт, иначе false,"reconcile":true только если вы именно в этом ответе явно приняли извинение и завершили сохранённую ссору (обычная вежливость не считается), иначе false,"meet":null}\nПоле meet заполняй, ТОЛЬКО если с учётом твоего ответа вы с ${s.profile.name} явно договорились встретиться и понятны день и время: {"date":"ГГГГ-ММ-ДД","time":"ЧЧ:ММ","kind":"date — свидание, friends — дружеская встреча, study — учёба","place":"break — на перемене, after — после пар, skip — вместо пар, dorm — в общежитии, cafe — в кафе города, city — в городе","note":"где именно, коротко"}. Если лишь обсуждаете или время не названо — null.\nЕсли ${s.profile.name} говорит, что в назначенное время у неё/него пара, отреагируй строго в характере персонажа: кто-то подначивает прогулять («да брось, одна пара ничего не решит»), кто-то сразу соглашается перенести и предлагает другое время, кто-то обижается или ворчит. Заполняй meet только когда договорённость снова окончательная: новое время, либо прежнее с place "skip", если ${s.profile.name} согласился(ась) прогулять.`}`);
         th.typing = false;
         if (S() !== s || epoch !== storySyncEpoch || (opts.jobId && th.pendingReply?.id !== opts.jobId) || dmRevision !== hash(JSON.stringify(th.msgs))) return 'retry';
         if (revision !== storyRevision()) {
@@ -3520,7 +3630,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             save(s); render(); scheduleStorySync(); return;
         }
         const js = th.kind === 'group' ? null : parseJSON(raw);
-        let r = cleanReply(js && typeof js.reply === 'string' ? js.reply : raw).replace(/^["«]+|["»]+$/g, '');
+        const malformed = js && (typeof js !== 'object' || Array.isArray(js) || typeof js.reply !== 'string');
+        let r = cleanReply(malformed ? '' : js && typeof js.reply === 'string' ? js.reply : raw).replace(/^["«]+|["»]+$/g, '');
         const lastMine = [...th.msgs].reverse().find((m) => m.me);
         if (r) {
             let from;
@@ -3534,6 +3645,11 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (js && th.kind !== 'group' && !opts.initiate) updateRel(s, th, Number(js.delta) || 0, js.flirt === true || js.flirt === 'true', 8, lastMine ? `переписка в CityHub: ${s.profile.name} написал(а) «${lastMine.text.slice(0, 140)}»` : '');
             if (js?.meet && typeof js.meet === 'object') detectMeet(s, th, js.meet);
             th.msgs.push({ me: false, from, text: r, t: Date.now() });
+            if (th.conflict && js?.reconcile === true && RECONCILIATION_RE.test(r)
+                && !/не (?:помир|простил|простила)|не могу простить|если|\b(?:not|never|would|could|if)\b/iu.test(r)) {
+                finishConflict(s, th, { source: 'dm', evidence: quoteText(r).slice(0, 450) });
+                notify(s, `🕊️ Вы с ${th.name} помирились.`, 'social', { view: 'thread', param: th.id });
+            }
             th.t = Date.now();
             th.lastIncomingAt = th.t;
             if (!(ui.open && ui.view === 'thread' && ui.param === th.id)) { th.unread = (th.unread || 0) + 1; toast('info', `${th.name}: ${r.slice(0, 80)}`); notify(s, `💬 ${th.name}: ${r.slice(0, 70)}`, 'social', { view: 'thread', param: th.id }); }
@@ -3661,7 +3777,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (d.pre === 'sh-a') readAuth(s);
             return withBusy('Ищу способности в лоре…', async () => {
                 const lore = await loreText(/способн|сил[аы]|магия|дар|ability|power|skill|магич|чары|заклин/i);
+                if (S() !== s) return;
                 const r = await aiJSON(`${world(s)}\n\nЛор (лорбук и карточка):\n${lore || '(нет данных)'}\n\nВыпиши сверхъестественные способности, которые упоминаются в этом мире (в лоре, описании персонажа, сценарии). Только реально упомянутые, названия по-русски. visible — заметна ли способность окружающим со стороны (крылья, огонь в руках — да; телепатия — нет). Если ничего нет — пустой массив.\nФормат: [{"name":"способность","visible":false}]`);
+                if (S() !== s) return;
                 const list = (Array.isArray(r) ? r : []).map((x) => typeof x === 'string' ? { n: cleanMsg(x).slice(0, 60), v: false } : { n: cleanMsg(x?.name || '').slice(0, 60), v: x?.visible === true }).filter((x) => x.n);
                 const seen = new Set(), uniq = list.filter((x) => !seen.has(x.n) && seen.add(x.n)).slice(0, 40);
                 if (!uniq.length) return toast('info', 'В лоре и карточке способности не найдены. Выберите из списка или впишите свою.');
@@ -3689,7 +3807,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (d.pre === 'sh-a') readAuth(s);
             return withBusy('Ищу виды в лоре…', async () => {
                 const lore = await loreText(/вид|раса|species|race|полулюд|демихьюман|demi|вампир|оборот|эльф|фейри|демон|существ|creature/i);
+                if (S() !== s) return;
                 const r = await aiJSON(`${world(s)}\n\nЛор (лорбук и карточка):\n${lore || '(нет данных)'}\n\nВыпиши виды и расы разумных существ, которые упоминаются в этом мире (в лоре, описании персонажа, сценарии). Только те, что реально упомянуты, названия по-русски, как в мире. Если ничего нет — пустой массив.\nФормат: ["вид", "вид"]`);
+                if (S() !== s) return;
                 const list = (Array.isArray(r) ? r : []).map((x) => cleanMsg(typeof x === 'string' ? x : x?.name || '').slice(0, 50)).filter(Boolean);
                 const uniq = [...new Set(list)].slice(0, 40);
                 if (!uniq.length) return toast('info', 'В лоре и карточке виды не найдены. Выберите из списка или впишите свой.');
@@ -3698,7 +3818,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 save(s);
             });
         },
-        loadFac: (d, el, s) => { readAuth(s); return withBusy('Ищу факультеты в лоре…', async () => { s.faculties = await loadFaculties(s); save(s); }); },
+        loadFac: (d, el, s) => { readAuth(s); return withBusy('Ищу факультеты в лоре…', async () => { const list = await loadFaculties(s); if (S() !== s || !list) return; s.faculties = list; save(s); }); },
         pickFac: (d, el, s) => { readAuth(s); s.profile.faculty = s.faculties[+d.i]?.name || ''; const f = byId('sh-a-fac'); if (f) f.value = ''; save(s); render(); },
         login: (d, el, s) => {
             readAuth(s);
@@ -3712,7 +3832,9 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (isStudent(s.profile) && !fac) return toast('warning', 'Выберите факультет или впишите свой.');
             s.profile.faculty = fac;
             return withBusy('Составляю расписание…', async () => {
-                s.schedule = await genLifeSchedule(s);
+                const schedule = await genLifeSchedule(s);
+                if (S() !== s || !schedule) return;
+                s.schedule = schedule;
                 enqueue(s, async () => { const n = await extractLorePeople(s); if (n) notify(s, `👥 В CityHub появились люди из вашего мира: ${n}`, 'important'); });
                 enqueue(s, async () => { await extractCampusLore(s); });
                 enqueue(s, async () => { await genClubs(s); });
@@ -3811,6 +3933,7 @@ ${charCard()}` : ''}
 
 ${s.profile.name} приглашает ${th.name}${th.species ? ` (${th.species})` : ''} через CityHub: ${KINDS[kind]}, ${fmtWhen(at)}, ${PLACES[place]}${note ? `, ${note}` : ''}. Отношение ${th.name} к ${s.profile.name}: ${relLabel(th)} (${Math.round(th.rel || 0)} из 100).${th.kind === 'char' && s.profile.relWithChar ? ' Они пара.' : ''} Реши, соглашается ли ${th.name}, учитывая отношения, характер${place === 'skip' ? ', то, что это прогул,' : ''} и тип встречи.
 Формат: {"accept":true,"reply":"ответ в мессенджере, 1–2 предложения"}`);
+                if (S() !== s) return;
                 const accept = r?.accept === true || r?.accept === 'true';
                 if (!await mayReceivePersonal(s, th)) { scheduleReply(s, th); return; }
                 th.msgs.push({ me: false, text: cleanMsg(r?.reply || (accept ? 'Давай!' : 'Прости, не получится.')).slice(0, 500), t: NOW() });
@@ -3906,6 +4029,7 @@ ${story}
 
 Выполнил(а) ли ${s.profile.name} это задание в истории? Засчитывай только если действие действительно произошло в тексте, а не просто упомянуто или запланировано.
 Формат: {"done":true,"comment":"коротко, почему"}`);
+                if (S() !== s) return;
                 if (r?.done === true || r?.done === 'true') { completeQuest(s, q); save(s); }
                 else toast('info', `Пока не засчитано: ${cleanMsg(r?.comment || 'в истории не видно выполнения')}`);
             });
@@ -4060,7 +4184,9 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
 Формат: [{"name":"Имя Фамилия","age":27,"gender":"m, f или nb","profession":"профессия или пусто, если не работает","looks":"внешность, 1–2 предложения","character":"характер, 1–2 предложения","hobbies":"хобби","likes":"что любит","dislikes":"что не любит","seeks":"что ищет в людях","bio":"коротко о себе, до 160 символов","compat":75,"compatNote":"одно предложение","verified":true,"voice":null}]`);
                 if (S() !== s) return;
                 if (!Array.isArray(r) || !r.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
-                const candidates = r.filter((p) => p && p.name && (parseInt(p.age, 10) || 18) >= 18);
+                const candidates = r.filter((p) => p && p.name && Number.isFinite(+p.age) && +p.age >= 18
+                    && !['minor', 'child', 'kid', 'teen', 'student_minor'].includes(lorePerson(s, p.name)?.role)
+                    && !(lorePerson(s, p.name)?.age > 0 && lorePerson(s, p.name).age < 18));
                 dt.profiles = candidates.map((p) => ({ id: uid(), name: cleanName(p.name).slice(0, 40), age: Math.max(18, parseInt(p.age, 10) || 25), species: '', faculty: cleanMsg(p.profession || p.faculty || '').slice(0, 60), looks: cleanMsg(p.looks || '').slice(0, 300), character: cleanMsg(p.character || '').slice(0, 300), hobbies: cleanMsg(p.hobbies || '').slice(0, 200), likes: cleanMsg(p.likes || '').slice(0, 200), dislikes: cleanMsg(p.dislikes || '').slice(0, 200), seeks: cleanMsg(p.seeks || '').slice(0, 200), abilities: String(p.abilities || '').slice(0, 120), bio: String(p.bio || '').slice(0, 300), compat: clamp(parseInt(p.compat, 10) || 50, 0, 100), compatNote: String(p.compatNote || '').slice(0, 160), verified: p.verified !== false }));
                 rememberNpcVoices(s, dt.profiles.map((p, i) => ({ ...p, voice: candidates[i].voice })));
                 save(s);
@@ -4069,7 +4195,8 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
         dSkip: (d, el, s) => { s.dating.profiles = s.dating.profiles.filter((p) => p.id !== d.id); if (ui.view === 'dprofile') { ui.view = null; ui.tab = 'dating'; } save(s); render(); },
         dLike: (d, el, s) => {
             const p = s.dating.profiles.find((x) => x.id === d.id);
-            if (!p) return;
+            if (!p || !(p.age >= 18) || lorePerson(s, p.name)?.role === 'minor'
+                || (lorePerson(s, p.name)?.age > 0 && lorePerson(s, p.name).age < 18)) return;
             s.dating.profiles = s.dating.profiles.filter((x) => x.id !== d.id);
             if (Math.random() < 0.15 + (p.compat / 100) * 0.7) {
                 s.dating.matches.unshift({ ...p, bio: p.bio });
@@ -4095,7 +4222,7 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
         schedDay: (d) => { ui.schedDay = +d.d; render(); },
         regenSchedule: (d, el, s) => {
             if (!confirm('Составить расписание заново? Посещаемость прошлых пар сохранится.')) return;
-            return withBusy('Составляю расписание…', async () => { s.schedule = await genSchedule(s, s.profile.faculty); s.enforceFrom = NOW(); save(s); });
+            return withBusy('Составляю расписание…', async () => { const schedule = await genLifeSchedule(s); if (S() !== s || !schedule) return; s.schedule = schedule; s.enforceFrom = NOW(); save(s); });
         },
         checkin: (d, el, s) => {
             const o = findOcc(s, d.key); const now = NOW();
@@ -4113,6 +4240,8 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
             if (reason.length < 10) return toast('warning', 'Опишите причину подробнее.');
             return withBusy('Руководство рассматривает…', async () => {
                 const r = await aiJSON(`${world(s)}\n\n${s.profile.name} просит признать уважительным отсутствие на «${o.cl.subject}» (${fmtD(o.start)}) уважительным. Причина: «${reason}». Ты — руководство (начальник на работе или преподаватель на учёбе). Уважительные причины: болезнь, форс-мажор, семейные обстоятельства, вызов в суд. Неуважительные: лень, проспал, свидание, «не хотелось».\nФормат: {"valid":true,"reply":"ответ деканата, 1 предложение"}`);
+                if (S() !== s || s.attendance[d.key] || s.excuses[d.key] || NOW() >= o.end) return;
+                if (!r || ![true, false, 'true', 'false'].includes(r.valid)) return toast('error', 'Не удалось рассмотреть запрос. Попробуйте ещё раз.');
                 const valid = r?.valid === true || r?.valid === 'true';
                 s.excuses[d.key] = { reason, valid, reply: String(r?.reply || (valid ? 'Причина признана уважительной.' : 'Причина не признана уважительной.')).slice(0, 300) };
                 if (valid) { s.attendance[d.key] = 'excused'; notify(s, `📝 Отсутствие на «${o.cl.subject}» признано уважительным.`); }
@@ -4138,8 +4267,9 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
             if (ans.length < 20) return toast('warning', 'Ответ слишком короткий.');
             return withBusy('Преподаватель проверяет работу…', async () => {
                 const r = await aiJSON(`${world(s)}\n\n${t.work || t.extra ? `Ты — руководитель ${s.profile.name} (${s.profile.profession}). Оцени, как выполнено поручение,` : `Ты — преподаватель предмета «${t.subject}». Оцени ответ студента`} по пятибалльной шкале (2 — неудовлетворительно, 3, 4, 5 — отлично). Строго, но справедливо: отписки и ответы не по теме — 2.\nЗадание: ${t.desc}\nОтвет студента: ${ans}\nФормат: {"grade":4,"comment":"1–2 предложения"}`);
+                if (S() !== s || !s.tasks.includes(t) || t.done || t.expired) return;
                 let grade = Math.round(Number(r?.grade));
-                if (!(grade >= 2 && grade <= 5)) grade = ans.length > 300 ? 4 : 3;
+                if (!(grade >= 2 && grade <= 5)) return toast('error', 'Не удалось получить оценку. Попробуйте ещё раз.');
                 const late = NOW() > t.deadline && !t.extra;
                 if (late) grade = Math.min(grade, 3);
                 Object.assign(t, { done: true, doneAt: NOW(), answer: ans, grade, comment: `${String(r?.comment || '').slice(0, 400)}${late ? ' Сдано после срока, оценка не выше 3.' : ''}` });
@@ -4166,8 +4296,12 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
             if (!text) return toast('warning', 'Опишите, что нужно.');
             if (sv[1] === 'arrive') { if (orderService(s, sv[0], text, sv[2])) { const e = byId('sh-svc-text'); if (e) e.value = ''; } return; }
             return withBusy('Ищу исполнителя…', async () => {
-                const r = await aiJSON(`${world(s)}\n\nЖитель ${s.profile.name} ищет через CityHub: ${sv[0]}. Запрос: «${text}». Придумай исполнителя — реального человека этого города (разные люди: кто-то профи, кто-то так себе). Он пишет первым в личку: представляется, называет цену и условия.\nФормат: {"name":"имя","bio":"кто это, опыт, 1 предложение","message":"первое сообщение, 1–3 предложения"}`);
+                const voices = await voiceContext(s, [...s.npcVoices.map((p) => p.name), ...s.lorePeople.map((p) => p.name)], { social: false });
+                if (S() !== s) return;
+                const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\nЖитель ${s.profile.name} ищет через CityHub: ${sv[0]}. Запрос: «${text}». Придумай исполнителя — реального человека этого города (разные люди: кто-то профи, кто-то так себе). Он пишет первым в личку: представляется, называет цену и условия.\nФормат: {"name":"имя","bio":"кто это, опыт, 1 предложение","message":"первое сообщение, 1–3 предложения","voice":null}`);
+                if (S() !== s) return;
                 if (!r?.name) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
+                rememberNpcVoices(s, r?.name ? [{ ...r, name: r.name, text: r.message || '' }] : []);
                 const th = openThread(s, cleanName(r.name), '', `${sv[0]}. ${cleanMsg(r.bio || '')}`);
                 th.known = true; th.status = 'по услуге';
                 if (r.message && await mayReceivePersonal(s, th)) th.msgs.push({ me: false, text: cleanMsg(r.message).slice(0, 500), t: Date.now() });
@@ -4178,7 +4312,11 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
             const subj = val('sh-tutor');
             if (!subj) return toast('warning', 'Сначала нужно расписание с предметами.');
             return withBusy('Ищу репетитора…', async () => {
-                const r = await aiJSON(`${world(s)}\n\nПридумай репетитора по предмету «${subj}» — старшекурсника или аспиранта этого университета.\nФормат: {"name":"","species":"","bio":"1–2 предложения, включая цену занятия в ₡"}`);
+                const voices = await voiceContext(s, [...s.npcVoices.map((p) => p.name), ...s.lorePeople.map((p) => p.name)], { social: false });
+                if (S() !== s) return;
+                const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\nПридумай репетитора по предмету «${subj}» — старшекурсника или аспиранта этого университета.\nФормат: {"name":"","species":"","bio":"1–2 предложения, включая цену занятия в ₡","voice":null}`);
+                if (S() !== s) return;
+                rememberNpcVoices(s, r?.name ? [{ ...r, name: r.name }] : []);
                 const th = openThread(s, r?.name || `Репетитор (${subj})`, r?.species || '', `Репетитор по предмету «${subj}». ${r?.bio || ''}`);
                 th.msgs.push({ sys: true, text: `Запрос на помощь по «${subj}» отправлен.`, t: Date.now() });
                 save(s);
@@ -4187,6 +4325,7 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
         groups: (d, el, s) => withBusy('Подбираю учебные группы…', async () => {
             const subjects = [...new Set(s.schedule.map((c) => c.subject))].join(', ');
             const r = await aiJSON(`${world(s)}\n\nПредложи 3 учебные группы для студента по его предметам: ${subjects}.\nФормат: [{"name":"","subject":"","when":"когда собираются"}]`);
+            if (S() !== s) return;
             s.groupOffers = Array.isArray(r) ? r.filter((g) => g && g.name).slice(0, 5).map((g) => ({ name: String(g.name).slice(0, 60), subject: String(g.subject || '').slice(0, 60), when: String(g.when || '').slice(0, 60) })) : [];
             if (!s.groupOffers.length) toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
             save(s);
@@ -4230,12 +4369,13 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
                 const r = await aiJSON(`${world(s)}\n\n${grocery ? 'Продуктовый магазин города с доставкой.' : 'Доставка готовой еды по городу из кафе и столовых.'} Житель хочет заказать то, чего нет в ассортименте: ${missing.join('; ')}.
 Для каждой позиции реши, можно ли это реально ${grocery ? 'купить' : 'заказать'} в этом мире (${mundane(s) ? 'обычный современный город, без магии' : 'сверхъестественный мир этого университета — магические продукты здесь доступны'}). Если да — дай нормальное название по-русски${grocery ? ' с весом или объёмом' : ''}, место (${grocery ? 'магазин или лавка' : 'кафе или столовая'}), правдоподобную цену в ₡ (редкое и деликатесы дороже; для ориентира: ${prices}) и категорию из существующих: ${tags.join(', ')}. Если нельзя — коротко объясни почему и предложи замену из доступного, если она есть.
 Формат: [{"query":"как написал житель","ok":true,"title":"","place":"","price":120,"tag":"","reason":"","substitute":""}]`);
+                if (S() !== s) return;
                 const res = (Array.isArray(r) ? r : []).filter((x) => x && x.query);
                 if (!res.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
                 const found = {}, refused = [];
                 for (const x of res) {
                     const q = String(x.query).trim().toLowerCase();
-                    if ((x.ok === true || x.ok === 'true') && x.title && +x.price > 0) {
+                    if ((x.ok === true || x.ok === 'true') && x.title && Number.isFinite(+x.price) && +x.price > 0) {
                         const it = { id: uid(), title: cleanMsg(x.title).slice(0, 80), place: cleanMsg(x.place || (grocery ? 'Минимаркет города' : 'Кафе города')).slice(0, 60), price: clamp(Math.round(+x.price), 10, 2000), tags: [String(x.tag || tags[0] || 'другое').toLowerCase().slice(0, 24)], special: true };
                         list.unshift(it);
                         found[q] = it.title;
@@ -4280,7 +4420,8 @@ ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx()
             const r = await aiJSON(`${world(s)}\n\n${mundane(s) ? 'Составь меню доставки по городу: кофе и напитки, выпечка и десерты, завтраки, ланчи, пицца, суши и азиатское, веганское, халяль, без глютена и т.п. Реалистичные кафе и столовые, цены в ₡ от 60 до 400.' : 'Составь меню доставки по городу для разных видов (кровь, сырое мясо, веган, нектар, эктоплазма, эмоции, огнеупорная еда, обычная еда и т.п.). Кафе и точки должны звучать как места этого университета.'}
 Нужно 28–32 позиции. Выбери 6–8 категорий (теги) и сделай в КАЖДОЙ категории минимум 4 позиции; у позиции 1–2 тега из этого набора. Названия блюд на русском.
 ${story ? `Последние события истории:\n${story}\nЕсли в истории ${ctx().name2} или кто-то из жителей упоминал, что хочет съесть или выпить что-то конкретное, — обязательно добавь это в меню (в подходящее кафе) и укажи wishedBy: имя того, кто хотел.\n` : ''}Формат: [{"title":"","place":"","price":150,"tags":["веган"],"wishedBy":""}] — теги короткие, строчными буквами.`);
-            const list = Array.isArray(r) ? r.filter((m) => m && m.title && +m.price > 0) : [];
+            if (S() !== s) return;
+            const list = Array.isArray(r) ? r.filter((m) => m && m.title && Number.isFinite(+m.price) && +m.price > 0) : [];
             if (!list.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
             s.menu = list.map((m) => ({ id: uid(), title: cleanMsg(m.title).slice(0, 80), place: cleanMsg(m.place || '').slice(0, 60), price: Math.round(+m.price), tags: (Array.isArray(m.tags) ? m.tags : []).map((t) => String(t).toLowerCase().slice(0, 20)).slice(0, 3), wishedBy: cleanName(m.wishedBy || '') }));
             s.menu.sort((a, b) => (b.wishedBy ? 1 : 0) - (a.wishedBy ? 1 : 0));
@@ -4294,7 +4435,8 @@ ${story ? `Последние события истории:\n${story}\nЕсли
             const story = recentStory(15);
             const r = await aiJSON(`${world(s)}\n\nСоставь ассортимент продуктового магазина города для доставки: 32–36 продуктов для готовки, 7–9 категорий (молочное, мясо и рыба, бакалея, овощи и зелень, фрукты, хлеб и сладкое, специи и напитки${mundane(s) ? '' : ', продукты для разных видов этого мира'} и т.п.), минимум 3 продукта в каждой категории. Названия на русском, с объёмом или весом, где уместно. Цены в ₡ от 20 до 300.
 ${story ? `Последние события истории:\n${story}\nЕсли в истории ${ctx().name2}, ${s.profile.name} или кто-то ещё собирался приготовить конкретное блюдо — обязательно включи ВСЕ нужные для него ингредиенты и у каждого укажи forDish: название блюда.\n` : ''}Формат: [{"title":"","place":"магазин","price":80,"tags":["бакалея"],"forDish":""}] — одна категория в tags, строчными буквами.`);
-            const list = (Array.isArray(r) ? r : []).filter((m) => m && m.title && +m.price > 0);
+            if (S() !== s) return;
+            const list = (Array.isArray(r) ? r : []).filter((m) => m && m.title && Number.isFinite(+m.price) && +m.price > 0);
             if (!list.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
             s.groceries = list.map((m) => ({ id: uid(), title: cleanMsg(m.title).slice(0, 80), place: cleanMsg(m.place || 'Минимаркет города').slice(0, 60), price: Math.round(+m.price), tags: (Array.isArray(m.tags) ? m.tags : []).map((t) => String(t).toLowerCase().slice(0, 24)).slice(0, 1), forDish: cleanMsg(m.forDish || '').slice(0, 60) }));
             s.groceries.sort((a, b) => (b.forDish ? 1 : 0) - (a.forDish ? 1 : 0));
@@ -4320,9 +4462,10 @@ ${story ? `Последние события истории:\n${story}\nЕсли
                 const r = await aiJSON(`${world(s)}\n\nЖитель ищет на маркетплейсе города: «${q}». Сгенерируй 3–5 объявлений от разных жителей (или магазинчиков города), которые продают или сдают именно это или близкие варианты — разное состояние, разные цены (новое дороже, б/у дешевле).${mundane(s) ? ' Только реальные вещи обычного мира, без магии.' : ' Вещи в духе этого сверхъестественного мира допустимы.'} Если такое в этом мире купить невозможно — верни пустой массив.
 Категория — одна из: ${MARKET_CATS.join(', ')}. Цены в ₡, для ориентира: одежда 300–3000, мебель 800–6000, электроника 1000–15000, книги 100–800.
 Формат: [{"title":"","cat":"","price":500,"rent":0,"seller":"имя, курс","rating":4.5,"verified":true}] — rent: цена аренды в неделю или 0.`);
-                const list = (Array.isArray(r) ? r : []).filter((m) => m && m.title && +m.price > 0);
+                if (S() !== s) return;
+                const list = (Array.isArray(r) ? r : []).filter((m) => m && m.title && Number.isFinite(+m.price) && +m.price > 0);
                 if (!list.length) return toast('info', `Никто на городе не продаёт «${q}». Попробуйте сформулировать иначе.`);
-                const add = list.map((m) => ({ id: uid(), title: cleanMsg(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Для дома', price: Math.round(+m.price), rent: Math.max(0, Math.round(+m.rent || 0)), seller: cleanMsg(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false, found: true }));
+                const add = list.map((m) => ({ id: uid(), title: cleanMsg(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Для дома', price: Math.round(+m.price), rent: Number.isFinite(+m.rent) ? Math.max(0, Math.round(+m.rent)) : 0, seller: cleanMsg(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false, found: true }));
                 s.market = [...add, ...s.market].slice(0, 60);
                 ui.mq = q; ui.mcat = 'all';
                 toast('success', `Найдено предложений: ${add.length}`);
@@ -4350,16 +4493,17 @@ ${story ? `Последние события истории:\n${story}\nЕсли
         },
         sell: (d, el, s) => {
             const title = val('sh-s-title'), price = Math.round(+val('sh-s-price'));
-            if (!title || !(price > 0)) return toast('warning', 'Укажите название и цену.');
+            if (!title || !Number.isFinite(price) || !(price > 0)) return toast('warning', 'Укажите название и цену.');
             s.listings.unshift({ id: uid(), title, cat: val('sh-s-cat'), price, t: Date.now(), sold: false });
             toast('success', 'Объявление опубликовано.');
             save(s); render();
         },
         genMarket: (d, el, s) => withBusy('Загружаю объявления…', async () => {
             const r = await aiJSON(`${world(s)}\n\n${mundane(s) ? 'Сгенерируй 16 объявлений городской барахолки: мебель, электроника, одежда, книги, спорт, товары для дома и детей и т.п. Никакой магии, реалистичные цены в ₡' : 'Сгенерируй 16 объявлений маркетплейса жителей: учебники, мебель, электроника и специализированное оборудование для разных видов'}.\nФормат: [{"title":"","cat":"Учебники|Мебель|Электроника|Оборудование","price":500,"rent":0,"seller":"имя","rating":4.5,"verified":true}] — rent: цена аренды в неделю или 0.`);
-            const list = Array.isArray(r) ? r.filter((m) => m && m.title && +m.price > 0) : [];
+            if (S() !== s) return;
+            const list = Array.isArray(r) ? r.filter((m) => m && m.title && Number.isFinite(+m.price) && +m.price > 0) : [];
             if (!list.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
-            s.market = [...s.market.filter((m) => m.found), ...list.map((m) => ({ id: uid(), title: String(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Для дома', price: Math.round(+m.price), rent: Math.max(0, Math.round(+m.rent || 0)), seller: String(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false }))].slice(0, 60);
+            s.market = [...s.market.filter((m) => m.found), ...list.map((m) => ({ id: uid(), title: String(m.title).slice(0, 80), cat: MARKET_CATS.includes(m.cat) ? m.cat : 'Для дома', price: Math.round(+m.price), rent: Number.isFinite(+m.rent) ? Math.max(0, Math.round(+m.rent)) : 0, seller: String(m.seller || 'Житель').slice(0, 40), rating: clamp(+m.rating || 4, 1, 5), verified: m.verified !== false }))].slice(0, 60);
             save(s);
         }),
 
@@ -4384,7 +4528,9 @@ ${story ? `Последние события истории:\n${story}\nЕсли
         }),
         genEvents: (d, el, s) => withBusy('Ищу мероприятия…', async () => {
             const loreEv = await loreText(/мероприят|праздник|бал|фестивал|турнир|концерт|вечеринк|традици|ярмарк|event|festival|party|tradition/i);
-            const r = await aiJSON(`${world(s)}\n${loreEv ? `\nЛор о событиях и традициях города:\n${loreEv.slice(0, 2500)}\nЕсли там описаны мероприятия или традиции — используй их в первую очередь.\n` : ''}\nПридумай 4 ближайших городских мероприятия (концерты, ярмарки, выставки, спортивные матчи, фестивали, лекции, благотворительные акции, вечеринки).\nФормат: [{"title":"","when":"например: пятница, 19:00","place":"","desc":"одно предложение"}]`);
+            if (S() !== s) return;
+            const r = await aiJSON(`${world(s)}\n${loreEv ? `\nЛор о событиях и традициях города:\n${loreEv}\nЕсли там описаны мероприятия или традиции — используй их в первую очередь.\n` : ''}\nПридумай 4 ближайших городских мероприятия (концерты, ярмарки, выставки, спортивные матчи, фестивали, лекции, благотворительные акции, вечеринки).\nФормат: [{"title":"","when":"например: пятница, 19:00","place":"","desc":"одно предложение"}]`);
+            if (S() !== s) return;
             const list = Array.isArray(r) ? r.filter((e) => e && e.title) : [];
             if (!list.length) return toast('error', 'ИИ вернул ответ не в том формате. Попробуйте ещё раз.');
             s.events = [...s.events.filter((e) => e.lore), ...list.map((e) => ({ id: uid(), title: String(e.title).slice(0, 80), when: String(e.when || '').slice(0, 50), place: String(e.place || '').slice(0, 60), desc: String(e.desc || '').slice(0, 200), going: false }))].slice(0, 12);
@@ -4395,8 +4541,8 @@ ${story ? `Последние события истории:\n${story}\nЕсли
         book: (d, el, s) => {
             const dr = bookingDraft(s);
             if (dr.need) return toast('warning', dr.need);
-            if (!dr.price) return toast('warning', 'Не удалось посчитать стоимость — проверьте поля.');
-            if (dr.start && dr.start < NOW() - HOUR) return toast('warning', 'Выберите дату в будущем.');
+            if (!Number.isFinite(dr.price) || dr.price <= 0) return toast('warning', 'Не удалось посчитать стоимость — проверьте поля.');
+            if (!Number.isFinite(dr.start) || dr.start < NOW()) return toast('warning', 'Выберите дату в будущем.');
             const finish = (b) => {
                 s.bookings.unshift(b);
                 if (b.status === 'ok' && b.start) {
@@ -4415,13 +4561,15 @@ ${story ? `Последние события истории:\n${story}\nЕсли
                 const r = await aiJSON(`${world(s)}\n\n${s.profile.name} (${AGE_GROUPS[s.profile.age] || ''} лет, ${s.profile.profession}, рейтинг законопослушности ${rating(s)}%) отправляет через CityHub запрос: ${dr.title}${dr.start ? `, с ${fmtDay(dr.start)}` : ''}${dr.end ? ` по ${fmtDay(dr.end)}` : ''}, цена ${money(dr.price)}. Ты — хозяин${dr.buy ? ' или продавец' : ''}. ${dr.easy ? 'Базы отдыха почти всегда соглашаются, отказывают редко (занято, ремонт).' : 'Реши по-человечески: хозяева бывают разные — кто-то соглашается, кто-то отказывает (нет свободных дат, не сдают студентам или с животными, сомневаются в платёжеспособности, низкий рейтинг жильца и т.п.).'}
 Формат: {"accept":true,"reason":"если отказ — причина одной фразой","owner":"имя хозяина","reply":"короткое сообщение хозяина"}`);
                 if (S() !== s) return;
-                const ok = r?.accept === true || r?.accept === 'true' || (!r && dr.easy);
+                if (!r || ![true, false, 'true', 'false'].includes(r.accept)) return toast('error', 'Не удалось получить решение хозяина. Попробуйте ещё раз.');
+                const ok = r.accept === true || r.accept === 'true';
                 const owner = canonicalName(s, r?.owner) || 'Хозяин';
                 if (r?.reply) {
                     let th = s.threads.find((x) => x.kind !== 'group' && x.kind !== 'official' && samePerson(s, x.name, owner));
                     if (!th) { th = { id: uid(), name: owner, species: '', bio: `сдаёт или продаёт: ${dr.title}`, kind: 'dm', msgs: [], t: Date.now(), unread: 0, rel: 10, known: true, status: 'деловые' }; s.threads.unshift(th); }
-                    if (!await mayReceivePersonal(s, th)) return;
-                    th.msgs.push({ me: false, text: cleanMsg(r.reply).slice(0, 400), t: Date.now() }); th.unread = (th.unread || 0) + 1; th.t = Date.now();
+                    const deliver = await mayReceivePersonal(s, th);
+                    if (S() !== s) return;
+                    if (deliver) { th.msgs.push({ me: false, text: cleanMsg(r.reply).slice(0, 400), t: Date.now() }); th.unread = (th.unread || 0) + 1; th.t = Date.now(); }
                 }
                 if (ok) {
                     if (!pay(s, dr.price, `${dr.buy ? 'Покупка' : 'Бронь'}: ${dr.title}`)) return;
@@ -4442,6 +4590,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
             if (/сантехник/i.test(type)) orderService(s, 'Сантехник', text, 0);
             if (/президент|благоустройств|жалоб/i.test(type)) enqueue(s, async () => {
                 const r = await aiJSON(`${world(s)}\n\nЖитель ${s.profile.name} отправил обращение «${type}»: «${text}». Напиши официальный ответ ведомства (администрация президента, мэрия, соответствующая служба). Ответы бывают разные: помогут, отпишутся, перенаправят.\nФормат: {"from":"ведомство","text":"2–3 предложения"}`);
+                if (S() !== s) return;
                 if (!r?.text) return;
                 const from = cleanName(r.from) || 'Городская администрация';
                 let th = s.threads.find((x) => x.kind === 'official' && nameSpelling(x.name) === nameSpelling(from));
@@ -4626,8 +4775,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
         storySyncEpoch++;
         mainGenerating = false;
         clearTimeout(storySyncTimer);
-        clearTimeout(saveTimer);
-        ui.view = null; ui.param = null; lastKey = '';
+        ui.view = null; ui.param = null; lastKey = ''; ui.busy = ''; busyTask = null;
         const s0 = S();
         if (s0) {
             storySessions.delete(s0);
