@@ -2017,22 +2017,28 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     function lorePerson(s, name) {
         return (s.lorePeople || []).find((p) => samePerson(s, p.name, name));
     }
-    /** Находит в лорбуке и карточке жителей и сотрудников университета, отсекая родных и посторонних. */
+    /** Находит именованных жителей из карточки и лора, включая полное имя основного персонажа. */
     async function extractLorePeople(s) {
         const c = ctx();
         const lore = await loreText(null);
         const card = charCard();
-        const r = await aiJSON(`${card}\n\nЛор (лорбук):\n${lore || '(нет)'}\n\nВыпиши всех упомянутых конкретных персонажей, кроме ${c.name2} и ${s.profile.name}: родителей, родственников, друзей, соседей, коллег, начальников — всех жителей города. Для каждого: role — "adult" (18 и старше) или "minor" (младше 18 — школьники, дети); age — возраст числом, если понятен; profession — профессия или занятие.
+        const r = await aiJSON(`${card}\n\nЛор (лорбук):\n${lore || '(нет)'}\n\nВыпиши всех упомянутых конкретных персонажей, кроме пользователя ${s.profile.name}: основного персонажа ${c.name2}, родителей, родственников, друзей, соседей, коллег, начальников — всех жителей города. Если в имени карточки указано только имя, а в описании или лоре есть полное имя того же персонажа, сохрани полное имя. Не придумывай отсутствующую фамилию. Если людей с этим именем несколько, выпиши каждого с его фамилией, не назначай одному из них короткое имя без явной связи в источнике. Для каждого: role — "adult" (18 и старше) или "minor" (младше 18 — школьники, дети); age — возраст числом, если понятен; profession — профессия или занятие.
 Один человек — одна запись, даже если имя написано на разных языках. aliases — только явно указанные в карточке/лоре другие написания имени того же человека; не включай однофамильцев и не придумывай псевдонимы.\nФормат: [{"name":"имя как в лоре","aliases":["другое написание, если указано"],"role":"adult","age":45,"profession":"","bio":"характер и важное, 1–2 предложения","relation":"кем приходится ${c.name2}"}]. Если никого нет — пустой массив.`);
-        if (S() !== s) return 0;
-        const list = (Array.isArray(r) ? r : []).filter((p) => p && p.name).map((p) => ({
+        if (S() !== s || !Array.isArray(r)) return 0;
+        const source = `${card}\n${lore}`.replace(/<[^>]+>/g, ' ').replace(/[*_`@]/g, '').normalize('NFKC').toLowerCase().replace(/ё/g, 'е').replace(/[\s’'".-]+/g, ' ');
+        const inSource = (name) => {
+            const n = nameSpelling(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return !!n && new RegExp(`(^|[^\\p{L}\\p{N}])${n}([^\\p{L}\\p{N}]|$)`, 'u').test(source);
+        };
+        const list = r.filter((p) => p && p.name).map((p) => ({
             name: cleanName(p.name).slice(0, 50), species: '', role: p.role === 'minor' || (+p.age && +p.age < 18) ? 'minor' : 'adult',
             age: clamp(parseInt(p.age, 10) || 0, 0, 110), faculty: cleanMsg(p.profession || '').slice(0, 60), year: 0,
             abilities: '', bio: cleanMsg(p.bio || '').slice(0, 300), relation: cleanMsg(p.relation || '').slice(0, 80),
-            aliases: (Array.isArray(p.aliases) ? p.aliases : []).map(cleanName).filter((a) => a && `${card}\n${lore}`.toLowerCase().includes(a.toLowerCase())).slice(0, 8),
-        })).filter((p) => !samePerson(s, p.name, c.name2) && p.name !== s.profile.name);
+            aliases: (Array.isArray(p.aliases) ? p.aliases : []).map(cleanName).filter(inSource).slice(0, 8),
+        })).filter((p) => inSource(p.name) && nameSpelling(p.name) !== nameSpelling(s.profile.name));
         s.lorePeople = list.slice(0, 30);
         s.lorePeopleAt = Date.now();
+        s.lorePeopleVersion = 2;
         save(s);
         return s.lorePeople.length;
     }
@@ -2975,7 +2981,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.19 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.20 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -4411,7 +4417,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
         }
         if (s0 && s0.auth && !s0.campusLoreAt) enqueue(s0, async () => { await extractCampusLore(s0); });
         if (s0 && s0.auth && !s0.genClubsAt) enqueue(s0, async () => { await genClubs(s0); });
-        if (s0 && s0.auth && !s0.lorePeopleAt) enqueue(s0, async () => { const n = await extractLorePeople(s0); if (n) notify(s0, `👥 В CityHub появились люди из вашего мира: ${n}`, 'important'); });
+        if (s0 && s0.auth && (!s0.lorePeopleAt || s0.lorePeopleVersion !== 2)) enqueue(s0, async () => { const n = await extractLorePeople(s0); if (n) notify(s0, `👥 В CityHub появились люди из вашего мира: ${n}`, 'important'); });
         tick();
         updateInjection();
         render();
