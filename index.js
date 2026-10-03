@@ -2129,6 +2129,14 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         return (s.lorePeople || []).find((p) => samePerson(s, p.name, name));
     }
     const VOICE_RULE = `ГОЛОС КАЖДОГО АВТОРА: сохраняй его собственные характер, лексику, обращения, длину фраз, прямоту, юмор, сдержанность и манеру из карточки/лорбука и его примеров речи. Не переноси голос основного персонажа на NPC или одного NPC на другого. Если карточка отдельно описывает NPC, эти сведения относятся к этому NPC. Эмодзи и сленг используй только если они свойственны этому конкретному автору по источникам; иначе пиши без них. Соцсеть сама по себе не делает человека эмоциональным, фамильярным, остроумным или разговорчивым. Отношения и настроение меняют содержание и тон, но не подменяют личность: близкий не обязан одобрять всё, враг не обязан язвить в каждой реплике. Примеры речи — ориентир стиля, не произошедшие события и не готовый ответ; не копируй их дословно. Факты карточки/лора важнее старых сгенерированных публикаций. Если манера NPC не описана, держись его известных черт и прежней речи, не придумывай новый акцент, словечки, эмодзи или сленг при каждом запросе.`;
+    /** Current personal relationships, including mild/old conflicts outside recent story excerpts. */
+    function authorRelations(s, names) {
+        const list = s.threads.filter((th) => (th.kind === 'char' || th.kind === 'dm')
+            && names.some((n) => samePerson(s, th.name, n))
+            && (hasStoryProgress() || th.conflict?.source === 'dm'));
+        if (!list.length) return '';
+        return `\n\nТЕКУЩИЕ ОТНОШЕНИЯ АВТОРОВ С ${s.profile.name}:\n${list.map((th) => `${th.name}: ${relLabel(th)}.${th.relNote ? ` Основание: ${th.relNote}.` : ''}${th.conflict ? ` Неразрешённый конфликт: ${th.conflict.why || 'ссора'}; источник: ${th.conflict.source === 'dm' ? 'личное общение' : 'основная история'}.` : ''}${th.reconciled && !th.conflict ? ' Последняя ссора завершилась примирением.' : ''}`).join('\n')}\nКонфликт относится только к указанным людям. Характер и старые доброжелательные примеры речи не отменяют текущую ссору: вежливый ответ не означает дружбу или прощение. Учитывай причину и отношение, даже если старое событие не попало в последние сообщения истории; отсутствие упоминания ссоры не является примирением. Если в последних событиях действительно показано изменение отношений, учитывай его. Не придумывай прощение или новую ссору ради приятного комментария. Каждый реагирует на конфликт в своём характере: возможны сдержанная дистанция, холод, прямые претензии или резкость, а не одинаковая агрессия у всех. Сведения об отношениях нужны для реакции автора, их не обязательно разглашать в публичном тексте.`;
+    }
     /** Full speech sources for selected authors; public history is a secondary style reference. */
     async function voiceContext(s, names = [], { social = true, includeChar = true } = {}) {
         const c = ctx(), authors = [];
@@ -2149,7 +2157,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             }
             return `${n}: ${p ? `${p.bio || ''}${p.relation ? `; для ${c.name2}: ${p.relation}` : ''}` : ''}${th?.bio ? `\nСведения о собеседнике: ${th.bio}` : ''}${samples.length ? `\nПрежняя публичная речь (только стиль; не повторяй): ${JSON.stringify(samples.slice(0, 3))}` : ''}`;
         });
-        return `\n\n${VOICE_RULE}${includeChar && !c.groupId ? `\n\nИсточник голоса основного персонажа (только для ${c.name2}):\n${charCard()}` : ''}${profiles.length ? `\n\nОтдельные сведения об авторах NPC:\n${profiles.join('\n---\n')}` : ''}${lore ? `\n\nПолные записи лора выбранных авторов (сведения относятся только к названным в записи людям):\n${lore}` : ''}${social ? `\n\nСобытия истории для рассказчика:\n${recentStory(12) || '(нет)'}\nТекущая сцена: ${currentScene() || '(нет)'}. Каждый автор знает только то, что видел, слышал или ему рассказали; публичный пост не раскрывает автоматически личную переписку и чужие секреты.` : ''}`;
+        const relations = authorRelations(s, [...authors, ...(includeChar && !c.groupId ? [c.name2] : [])]);
+        return `\n\n${VOICE_RULE}${includeChar && !c.groupId ? `\n\nИсточник голоса основного персонажа (только для ${c.name2}):\n${charCard()}` : ''}${profiles.length ? `\n\nОтдельные сведения об авторах NPC:\n${profiles.join('\n---\n')}` : ''}${lore ? `\n\nПолные записи лора выбранных авторов (сведения относятся только к названным в записи людям):\n${lore}` : ''}${relations}${social ? `\n\nСобытия истории для рассказчика:\n${recentStory(12) || '(нет)'}\nТекущая сцена: ${currentScene() || '(нет)'}. Каждый автор знает только то, что видел, слышал или ему рассказали; публичный пост не раскрывает автоматически личную переписку и чужие секреты.` : ''}`;
     }
     /** Находит именованных жителей из карточки и лора, включая полное имя основного персонажа. */
     async function extractLorePeople(s) {
@@ -3115,7 +3124,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.23 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.24 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
