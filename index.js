@@ -734,10 +734,10 @@
         if (!ch) return '';
         const parts = [`Карточка персонажа ${c.name2}:`];
         const d = field(ch, 'description'), p = field(ch, 'personality'), sc = field(ch, 'scenario'), ex = field(ch, 'mes_example');
-        if (d) parts.push(`Описание: ${macros(d).slice(0, 3500)}`);
-        if (p) parts.push(`Личность: ${macros(p).slice(0, 1200)}`);
-        if (sc) parts.push(`Сценарий: ${macros(sc).slice(0, 900)}`);
-        if (ex) parts.push(`Примеры речи персонажа (ориентир для стиля и манеры, не копируй дословно):\n${macros(ex).replace(/<START>/gi, '').trim().slice(0, 1800)}`);
+        if (d) parts.push(`Описание: ${macros(d)}`);
+        if (p) parts.push(`Личность: ${macros(p)}`);
+        if (sc) parts.push(`Сценарий: ${macros(sc)}`);
+        if (ex) parts.push(`Примеры речи персонажа (ориентир для стиля и манеры, не копируй дословно):\n${macros(ex).replace(/<START>/gi, '').trim()}`);
         return parts.join('\n');
     }
     // Factual card fields, without truncation or style examples/first-message candidates.
@@ -747,18 +747,6 @@
     }
     const quoteText = (t) => String(t || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
     const escapeRE = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    function relationshipCardContext(s) {
-        const source = relationshipCardSource(), terms = /\{\{\s*user\s*\}\}|relationships?|отношени[яй]/giu;
-        const spans = [];
-        for (const m of source.matchAll(terms)) {
-            const a = Math.max(0, m.index - 250), b = Math.min(source.length, m.index + 1100);
-            if (spans.length && a <= spans.at(-1)[1]) spans.at(-1)[1] = b; else spans.push([a, b]);
-        }
-        if (!spans.length) for (const n of [ctx().name1, s.profile.name].filter(Boolean)) {
-            const i = source.toLowerCase().indexOf(n.toLowerCase()); if (i !== -1) spans.push([Math.max(0, i - 250), Math.min(source.length, i + 1100)]);
-        }
-        return macros(spans.map(([a, b]) => source.slice(a, b)).join('\n…\n').slice(0, 6000));
-    }
     function modelCardPairFact(s, th, r) {
         if (th.kind !== 'char' || r.cardRelationship?.pair !== true) return null;
         const proof = quoteText(r.cardRelationship.evidence), source = quoteText(macros(relationshipCardSource()));
@@ -912,8 +900,10 @@
         const ch = c.characters?.[c.characterId];
         let out = `Персонаж истории: ${c.name2 || '—'}.`;
         if (ch) {
-            if (ch.description) out += `\nОписание персонажа: ${macros(ch.description).slice(0, 2200)}`;
-            if (ch.scenario) out += `\nСценарий: ${macros(ch.scenario).slice(0, 700)}`;
+            const d = field(ch, 'description'), p = field(ch, 'personality'), sc = field(ch, 'scenario');
+            if (d) out += `\nОписание персонажа: ${macros(d)}`;
+            if (p) out += `\nЛичность: ${macros(p)}`;
+            if (sc) out += `\nСценарий: ${macros(sc)}`;
         }
         return out;
     }
@@ -1541,7 +1531,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     }
     function needsRelSync(s, th) {
         if (th.relSyncing || !relevantForSync(s, th)) return false;
-        return th.relStoryRevision !== storyRevision() || th.relPolicyVersion !== 2 || th.relCardRevision !== relationCardKey(s, th);
+        return th.relStoryRevision !== storyRevision() || th.relPolicyVersion !== 3 || th.relCardRevision !== relationCardKey(s, th);
     }
     /** Определяет текущие отношения по карточке, основной истории и переписке (история важнее карточки). */
     async function syncRel(s, th) {
@@ -1557,7 +1547,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             const fact = cardPairFact(s, th);
             const lp = lorePerson(s, th.name);
             const about = th.kind === 'char'
-                ? `${charCard()}\nФрагменты об отношениях из полных фактических полей карточки:\n${relationshipCardContext(s)}${field(ch, 'first_mes') ? `\nПервое сообщение истории: ${macros(field(ch, 'first_mes')).slice(0, 1200)}` : ''}`
+                ? `${charCard()}${field(ch, 'first_mes') ? `\nПервое сообщение истории: ${macros(field(ch, 'first_mes'))}` : ''}`
                 : `${th.name}${th.species ? ` (${th.species})` : ''}. ${th.bio || ''}${lp ? ` Из лора: ${lp.bio}${lp.relation ? `; для ${c.name2}: ${lp.relation}` : ''}.` : ''}`;
             const dms = th.msgs.filter((m) => !m.sys).slice(-10).map((m) => `${m.me ? s.profile.name : th.name}: ${m.text}`).join('\n');
             const r = await aiJSON(`${about}\n\n${fact ? `Подтверждённый исходный факт из ПОЛНОЙ карточки: «${macros(fact.evidence)}». Это относится к ${s.profile.name}; имя персоны ${c.name1} и имя профиля CityHub обозначают одного пользователя. Они уже знакомы и являются парой. Отсутствие переписки, работы вместе, упоминания романтики в последних сообщениях, обычная ссора, занятость или физическое расстояние этот факт не отменяют.` : ''}${th.pairMemory ? `\nПоследнее подтверждённое изменение отношений: ${th.pairMemory.pair ? 'пара' : 'расстались'}, «${th.pairMemory.evidence}».` : ''}\n\nПоследние события основной истории:\n${recentStory(20) || '(истории пока нет)'}\n\nПереписка в CityHub:\n${dms || '(не переписывались)'}\n\nОпредели, какие СЕЙЧАС отношения у ${th.name} с ${s.profile.name}. Карточка задаёт исходные отношения; продолжение истории и переписка меняют их только при явных событиях, а не при отсутствии упоминаний. Если в карточке пользователь — девушка, парень или супруг персонажа, known:true и pair:true сохраняются до явно состоявшегося расставания/развода. Пример: полицейский на патруле по-прежнему может иметь девушку. Опирайся на факты: состоявшиеся изменения истории и переписки важнее исходной карточки — если по карточке они не знакомы, а в истории уже подружились или начали встречаться, верь истории. Если они ещё ни разу не общались и не знакомы — known: false.\nВ cardRelationship отдельно укажи исходную пару из description/personality/scenario: pair:true только если явно сказано, что именно пользователь и этот персонаж уже встречаются/супруги; evidence — точная цитата факта из карточки с именем пользователя. Предпочтения, чужие и бывшие отношения, желания и примеры речи не являются подтверждением. При отсутствии такого факта pair:false и evidence пустая строка.\nВ pairChange верни последнее явно СОСТОЯВШЕЕСЯ изменение романтического статуса именно этих двух людей: state=together (стали/снова стали парой), apart (расстались/развелись), unchanged (такого события нет). source=story или dm, evidence=дословная цитата события из соответствующего текста, не менее 12 символов. Не путай физическую разлуку, ссору, просьбу/предложение встречаться, гипотезы и историю отношений с другими людьми с изменением этой пары. Для unchanged evidence пустая строка. Статус пары не равен настроению или баллу близости.\nТакже оцени доступность ${th.name} для мессенджера ПО ФАКТАМ текущей сцены: сон, вождение, работа, занятие, операция, бой и другие дела, не позволяющие переписываться. Не считай занятой всю профессию постоянно; если человек просто разговаривает, гуляет или отдыхает, busy:false. В presence верни busy (boolean), reason (короткую причину), until (ГГГГ-ММ-ДД ЧЧ:ММ только если конец занятности явно известен, иначе null).\nФормат: {"known":true,"rel":число от −100 (вражда) до 100 (самые близкие),"status":"короткий статус по-русски: не знакомы, знакомые, приятели, друзья, близкие друзья, флирт, пара, соперники, неприязнь, вражда…","pair":true если они сейчас в романтических отношениях,"note":"одной фразой, на чём основан вывод","cardRelationship":{"pair":false,"evidence":""},"pairChange":{"state":"unchanged","source":"story","evidence":""},"presence":{"busy":false,"reason":"","until":null}}`);
@@ -1589,7 +1579,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (resolved.evidence && (rejectedUnknown || (r.pair === true || r.pair === 'true') !== th.pair)) th.relNote = `${th.pair ? 'Пара' : 'Отношения завершены'}: ${macros(resolved.evidence)}`.slice(0, 300);
             th.relSyncLen = (ctx().chat || []).length;
             th.relStoryRevision = revision;
-            th.relPolicyVersion = 2;
+            th.relPolicyVersion = 3;
             th.relCardRevision = cardRevision;
             th.relStoryAccepted = !opening;
             if (!opening && th.kind === 'char' && th.pair !== !!s.profile.relWithChar) {
@@ -1982,7 +1972,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     const storySessions = new WeakMap();
     const storyMessageId = (m, i) => `${m.send_date || m.gen_started || i}:${m.name || ''}`;
     const storyMessageKey = (m) => `${m.swipe_id ?? ''}:${hash(String(m.mes || ''))}`;
-    const relationAttemptKey = (th, revision, s) => `${revision}:2:${relationCardKey(s, th)}:${hash(JSON.stringify(th.msgs))}`;
+    const relationAttemptKey = (th, revision, s) => `${revision}:3:${relationCardKey(s, th)}:${hash(JSON.stringify(th.msgs))}`;
     function storyRevision() {
         const c = ctx();
         return String(hash(JSON.stringify([c.name1, c.name2, (c.chat || []).map((m) =>
@@ -2155,7 +2145,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         })).filter((p) => inSource(p.name) && nameSpelling(p.name) !== nameSpelling(s.profile.name));
         s.lorePeople = list.slice(0, 30);
         s.lorePeopleAt = Date.now();
-        s.lorePeopleVersion = 2;
+        s.lorePeopleVersion = 3;
         save(s);
         return s.lorePeople.length;
     }
@@ -3098,7 +3088,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.21 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.22 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -4534,7 +4524,7 @@ ${story ? `Последние события истории:\n${story}\nЕсли
         }
         if (s0 && s0.auth && !s0.campusLoreAt) enqueue(s0, async () => { await extractCampusLore(s0); });
         if (s0 && s0.auth && !s0.genClubsAt) enqueue(s0, async () => { await genClubs(s0); });
-        if (s0 && s0.auth && (!s0.lorePeopleAt || s0.lorePeopleVersion !== 2)) enqueue(s0, async () => { const n = await extractLorePeople(s0); if (n) notify(s0, `👥 В CityHub появились люди из вашего мира: ${n}`, 'important'); });
+        if (s0 && s0.auth && (!s0.lorePeopleAt || s0.lorePeopleVersion !== 3)) enqueue(s0, async () => { const n = await extractLorePeople(s0); if (n) notify(s0, `👥 В CityHub появились люди из вашего мира: ${n}`, 'important'); });
         tick();
         updateInjection();
         render();

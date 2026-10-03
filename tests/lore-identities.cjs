@@ -16,7 +16,7 @@ function posts(s,names){s.feed=names.map((author,i)=>({id:'p'+i,author,text:'П�
  s.social.following=['Леон'];posts(s,['Leon','Леон Кеннеди']);
  model=()=>JSON.stringify([{name:'Леон Кеннеди',role:'adult',bio:'Полицейский'},{name:'Марвин Бранаг',role:'adult'}]);
  api.onChatChanged();await api.queue();
- assert.equal(calls,1,'old scan refreshed once');assert.equal(s.lorePeopleVersion,2);assert.ok(s.lorePeople.some(p=>p.name==='Леон Кеннеди'));
+ assert.equal(calls,1,'old scan refreshed once');assert.equal(s.lorePeopleVersion,3);assert.ok(s.lorePeople.some(p=>p.name==='Леон Кеннеди'));
  assert.ok(prompts[0].includes('основного персонажа Леон'));assert.ok(!prompts[0].includes('кроме Леон и'));
  assert.equal(s.threads.length,1);assert.equal(s.threads[0].id,'char-id');assert.equal(s.threads[0].name,'Леон Кеннеди');assert.equal(s.threads[0].msgs[0].id,'dm');assert.equal(s.threads[0].pair,true);assert.equal(s.threads[0].rel,70);assert.equal(s.threads[0].sceneAnchor.name,'Леон Кеннеди');
  assert.deepEqual(Array.from(s.feed,p=>p.author),['Леон Кеннеди','Леон Кеннеди']);assert.deepEqual(Array.from(s.social.following),['Леон Кеннеди']);assert.equal(api.looksLikeChar('Leon Kennedy'),true);

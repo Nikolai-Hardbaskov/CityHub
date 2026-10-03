@@ -12,7 +12,7 @@ const event=(state,source,evidence)=>({known:true,pair:state==='together',rel:40
 (async()=>{
  // The exact screenshot premise after the old 3500-character description cutoff.
  setup('Appearance: '+ 'Long description. '.repeat(300)+'\nRELATIONSHIPS: {{user}} is his girlfriend; they have been dating for quite some time and are in a serious relationship.');
- assert.ok(!api.charCard().includes('is his girlfriend'));assert.ok(api.cardPairFact(s,th));
+ assert.ok(api.charCard().includes('is his girlfriend'));assert.ok(api.cardPairFact(s,th));
  await evaluate(unknown);assert.equal(th.known,true);assert.equal(th.pair,true);assert.equal(th.status,'пара');assert.equal(api.relLabel(th),'пара');assert.equal(s.profile.relWithChar,true);assert.ok(prompt.includes('Ариша is his girlfriend'));assert.ok(prompt.includes('Отсутствие переписки'));assert.ok(!s.notes.some(n=>n.text.includes('не пара')));assert.equal(th.presence.busy,true,'work affects availability, not romance');assert.equal(api.needsRelSync(s,th),false);
  // Missing pairChange, invented evidence, ordinary work and a quarrel cannot remove the pair.
  await evaluate({...unknown,known:true,status:'знакомые'});assert.equal(th.pair,true);
