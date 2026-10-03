@@ -147,6 +147,8 @@
 #cityhub-phone .sh-story { background: none; border: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 58px; flex-shrink: 0; }
 #cityhub-phone .sh-story .sh-ava { box-shadow: 0 0 0 2px var(--sh-ink), 0 0 0 4px var(--sh-amber); }
 #cityhub-phone .sh-story small { max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#cityhub-phone .sh-story.namesake { width: 106px; }
+#cityhub-phone .sh-story.namesake small { max-width: 106px; white-space: normal; overflow: visible; line-height: 1.2; }
 #cityhub-phone .sh-post-h { display: flex; gap: 10px; align-items: flex-start; }
 #cityhub-phone .sh-post-t { margin: 10px 0 6px; white-space: pre-wrap; }
 #cityhub-phone .sh-media { display: flex; gap: 10px; align-items: center; padding: 22px 14px; margin: 6px 0; border-radius: 10px; background: var(--sh-card2); color: var(--sh-mute); font-style: italic; font-size: 13px; }
