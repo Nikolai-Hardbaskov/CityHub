@@ -873,7 +873,7 @@
         return '';
     }
     /** Записи лорбука, чьи ключи встречаются в тексте, плюс постоянные записи. */
-    async function loreFor(text) {
+    async function loreFor(text, { full = false, exactKeys = false } = {}) {
         const c = ctx();
         const ch = c.characters?.[c.characterId];
         const books = new Set();
@@ -883,7 +883,10 @@
         const out = [];
         const take = (keys, content, constant, disabled) => {
             if (disabled || !content) return;
-            const hit = constant || (keys || []).some((k) => { k = String(k).trim().toLowerCase(); return k.length > 1 && low.includes(k); });
+            const hit = constant || (keys || []).some((k) => {
+                k = String(k).trim().toLowerCase();
+                return k.length > 1 && (exactKeys ? new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRE(k)}([^\\p{L}\\p{N}]|$)`, 'u').test(low) : low.includes(k));
+            });
             if (hit) out.push(macros(content));
         };
         for (const name of books) {
@@ -893,7 +896,8 @@
             } catch (e) { logErr('Лорбук', e); }
         }
         for (const e of ch?.data?.character_book?.entries || []) take(e.keys, e.content, e.constant, e.enabled === false);
-        return out.join('\n---\n').slice(0, 3000);
+        const joined = out.join('\n---\n');
+        return full ? joined : joined.slice(0, 3000);
     }
     function charInfo() {
         const c = ctx();
@@ -2124,6 +2128,29 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     function lorePerson(s, name) {
         return (s.lorePeople || []).find((p) => samePerson(s, p.name, name));
     }
+    const VOICE_RULE = `ГОЛОС КАЖДОГО АВТОРА: сохраняй его собственные характер, лексику, обращения, длину фраз, прямоту, юмор, сдержанность и манеру из карточки/лорбука и его примеров речи. Не переноси голос основного персонажа на NPC или одного NPC на другого. Если карточка отдельно описывает NPC, эти сведения относятся к этому NPC. Эмодзи и сленг используй только если они свойственны этому конкретному автору по источникам; иначе пиши без них. Соцсеть сама по себе не делает человека эмоциональным, фамильярным, остроумным или разговорчивым. Отношения и настроение меняют содержание и тон, но не подменяют личность: близкий не обязан одобрять всё, враг не обязан язвить в каждой реплике. Примеры речи — ориентир стиля, не произошедшие события и не готовый ответ; не копируй их дословно. Факты карточки/лора важнее старых сгенерированных публикаций. Если манера NPC не описана, держись его известных черт и прежней речи, не придумывай новый акцент, словечки, эмодзи или сленг при каждом запросе.`;
+    /** Full speech sources for selected authors; public history is a secondary style reference. */
+    async function voiceContext(s, names = [], { social = true, includeChar = true } = {}) {
+        const c = ctx(), authors = [];
+        for (const name of names.filter(Boolean)) {
+            const n = canonicalName(s, name);
+            if (n && !samePerson(s, n, s.profile.name) && !authors.some((a) => samePerson(s, a, n))) authors.push(n);
+        }
+        const aliases = peopleIndex(s).aliases.filter((p) => authors.some((n) => samePerson(s, n, p.name)));
+        const lookup = [...authors, ...aliases.flatMap((p) => [p.name, ...p.aliases]), ...(includeChar && !c.groupId ? [c.name2] : [])].filter(Boolean).join('\n');
+        const lore = lookup ? await loreFor(lookup, { full: true, exactKeys: true }) : '';
+        const profiles = authors.filter((n) => c.groupId || !samePerson(s, n, c.name2)).map((n) => {
+            const p = lorePerson(s, n), th = s.threads.find((t) => t.kind === 'dm' && samePerson(s, t.name, n));
+            const samples = [];
+            if (social) for (const post of s.feed) {
+                if (!post.mine && samePerson(s, post.author, n) && post.text) samples.push(post.text);
+                for (const comment of shownComments(post)) if (!comment.mine && samePerson(s, comment.author, n) && comment.text) samples.push(comment.text);
+                if (samples.length >= 3) break;
+            }
+            return `${n}: ${p ? `${p.bio || ''}${p.relation ? `; для ${c.name2}: ${p.relation}` : ''}` : ''}${th?.bio ? `\nСведения о собеседнике: ${th.bio}` : ''}${samples.length ? `\nПрежняя публичная речь (только стиль; не повторяй): ${JSON.stringify(samples.slice(0, 3))}` : ''}`;
+        });
+        return `\n\n${VOICE_RULE}${includeChar && !c.groupId ? `\n\nИсточник голоса основного персонажа (только для ${c.name2}):\n${charCard()}` : ''}${profiles.length ? `\n\nОтдельные сведения об авторах NPC:\n${profiles.join('\n---\n')}` : ''}${lore ? `\n\nПолные записи лора выбранных авторов (сведения относятся только к названным в записи людям):\n${lore}` : ''}${social ? `\n\nСобытия истории для рассказчика:\n${recentStory(12) || '(нет)'}\nТекущая сцена: ${currentScene() || '(нет)'}. Каждый автор знает только то, что видел, слышал или ему рассказали; публичный пост не раскрывает автоматически личную переписку и чужие секреты.` : ''}`;
+    }
     /** Находит именованных жителей из карточки и лора, включая полное имя основного персонажа. */
     async function extractLorePeople(s) {
         const c = ctx();
@@ -3088,7 +3115,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.22 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.23 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -3399,11 +3426,13 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             extra = `\n\n${charCard()}${lore ? `\n\nЛор мира, связанный с разговором:\n${lore}` : ''}${story ? `\n\nПоследние события основной истории (${th.name} их помнит):\n${story}` : ''}${scene ? `\n\n=== ТЕКУЩИЙ МОМЕНТ ИСТОРИИ (самое важное) ===\n${scene}\n=== конец ===\nПереписка происходит ПРЯМО СЕЙЧАС, в этот самый момент истории. Строго соблюдай его: где находится ${th.name}, что делает, рядом ли ${s.profile.name}, время суток. Нельзя противоречить сцене — например, писать «я на патруле», если в сцене ${th.name} стоит у двери ${s.profile.name}. Если они сейчас рядом, ${th.name} может удивиться сообщению («я же прямо за дверью»), ответить вслух или написать с учётом этого.` : ''}`;
         }
         if (th.kind === 'dm') {
+            extra += await voiceContext(s, [th.name], { social: false, includeChar: false });
             const sc = currentScene();
             const story = recentStory(Number(cfg().chatContext) || 0);
             if (story) extra += `\n\nСобытия основной истории для рассказчика (собеседник знает только то, что видел, слышал или ему рассказали):\n${story}`;
             if (sc) extra += `\n\nТекущий момент основной истории: ${sc}`;
         }
+        if (th.kind === 'char') extra += `\n\n${VOICE_RULE}`;
         if (th.kind !== 'group') extra += `\n\nЭТО ЛИЧНАЯ ПЕРЕПИСКА только между ${th.name} и ${s.profile.name}: её никто больше не видит. Не обращайся в ней к третьим лицам («Майкл, скажи спасибо…», «@Келлер»), не пиши так, будто это комментарии или общий чат, — о других говори в третьем лице («скажу Майклу», «Майкл пусть спасибо скажет»). Комментарии в ленте — отдельное место.`;
         if (th.kind !== 'group') extra += `\n\nПРАВИЛО ПРИСУТСТВИЯ: кто по текущей сцене находится рядом с ${s.profile.name} (в одном помещении, в одной машине, за одним столом), общается с ней/ним вслух. Никогда не проси ${s.profile.name} «передать», «сказать» или «попросить» того, кто сейчас рядом с ней/ним, — ты бы сказал(а) это сам(а) или написал(а) этому человеку напрямую. Если ты сам(а) — ${th.name} — сейчас рядом с ${s.profile.name}, ${opts.initiate ? 'ты не пишешь в мессенджер: верни reply пустой строкой ""' : 'ответь с учётом этого (удивись сообщению, скажи вслух или коротко напиши)'}.`;
         const who = th.kind === 'group'
@@ -3452,7 +3481,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const c = ctx().name2, ct = s.threads.find((t) => t.kind === 'char');
         const rel = ct ? relLabel(ct) : 'неизвестно';
         const quarrel = ct?.conflict ? ` Сейчас они в ссоре: ${ct.conflict.why}.` : '';
-        return `\n${c} (персонаж основной истории) МОЖЕТ оставить комментарий, но не обязан. Его отношения с ${s.profile.name}: ${rel}.${quarrel} Реши по его характеру и этим отношениям: близкий или влюблённый поддержит; враг съязвит, поддразнит или демонстративно промолчит; в ссоре — промолчит, ответит холодно или колко; незнакомец обычно не комментирует. Если молчание уместнее — не включай его. Не противоречь текущей сцене.`;
+        return `\n${c} (персонаж основной истории) МОЖЕТ оставить комментарий, но не обязан. Его отношения с ${s.profile.name}: ${rel}.${quarrel} Реши по его собственному характеру и этим отношениям, будет ли он отвечать и как. Не своди близость к обязательной поддержке, вражду к язвительности, а ссору к обязательной грубости: сохраняй индивидуальные реакции и манеру речи из источников; незнакомец обычно не комментирует. Если молчание уместнее — не включай его. Не противоречь текущей сцене.`;
     }
     const postText = (p) => `${p.text || ''}${p.media ? ` [${p.kind === 'video' ? 'видео' : 'фото'}: ${p.media}]` : ''}`;
     async function aiComments(s, p, task, scoreWhat) {
@@ -3463,8 +3492,10 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             st ? `Пост — часть сюжетной линии «${st.title}» (участники: ${st.cast.join(', ')}): ${st.summary}` : '',
             p.mine && cancelled(s) ? `Сейчас ${s.profile.name} «отменяют» в сети: большинство комментаторов настроены враждебно, лишь пара человек заступается.` : '',
         ].filter(Boolean).join('\n');
+        const voices = await voiceContext(s, [p.author, ...shownComments(p).map((c) => c.author), ...s.lorePeople.map((p) => p.name), ...s.threads.filter((t) => t.kind === 'dm').map((t) => t.name)]);
+        if (S() !== s) return [];
         const scoreFmt = scoreWhat ? `\nТакже оцени ${scoreWhat} ${s.profile.name}: authority (−5…5 — насколько это подняло авторитет ${s.profile.name}: остроумие, смелость, поддержка, интересная мысль — плюс; грубость, кринж, глупость — минус), controversy (0…10 — насколько спорно или токсично), sentiment (positive, mixed или negative — как восприняло сообщество). Реакция комментаторов должна соответствовать оценке.\nЕсли кто-то из комментаторов пообещал написать ${s.profile.name} в личку, начал договариваться с ней/ним о встрече или явно хочет продолжить разговор наедине — заполни followup: {"from":"имя этого комментатора","is_char":true если это ${ctx().name2} — персонаж основной истории, иначе false,"intent":"что он(а) напишет в личке — например, уточнит день, время и место встречи"}. Иначе followup: null.` : '';
-        const r = await aiJSON(`${world(s)}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${postText(p)}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии живые, как в настоящей соцсети: коротко, эмоционально, с эмодзи и сленгом, у каждого свой характер. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
+        const r = await aiJSON(`${world(s)}${voices}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${postText(p)}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии короткие, но каждый автор пишет в собственной манере по правилам голоса выше; не добавляй эмоции, эмодзи и сленг всем подряд. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
         const arr = Array.isArray(r) ? r : (Array.isArray(r?.comments) ? r.comments : []);
         const list = arr.filter((c) => c && c.author && c.text && cleanName(c.author) !== s.profile.name).slice(0, 8).map((c) => ({
             id: uid(), author: canonicalName(s, c.author), species: SP(s, c.species), text: stripMention(cleanMsg(c.text), cleanName(c.replyTo)).slice(0, 400),
@@ -3901,7 +3932,9 @@ ${story}
             const act = s.stories.filter((x) => now - x.updated < 5 * DAY).slice(-4);
             const storyTxt = act.map((x) => `- «${x.title}» (участники: ${x.cast.join(', ')}): ${x.summary}${x.userActs?.length ? ` Вмешательство ${name}: ${x.userActs.slice(-3).join(' | ')}` : ''}`).join('\n');
             const rels = s.threads.filter((t) => t.kind !== 'group' && (Math.abs(t.rel || 0) >= 40 || (t.flirt || 0) >= 3)).slice(0, 6).map((t) => `${t.name} — ${relLabel(t)}`).join('; ');
-            const r = await aiJSON(`${world(s)}\n\nСгенерируй 6 свежих публикаций в ленту CityHub от разных жителей города разных возрастов и профессий (есть и добрые, и неприятные люди).${loreStudentsLine(s)} Весь текст на русском, включая названия видов (имена могут быть любыми). Каналы: general, study, clubs, dorms, species.${s.profile.species ? ` Минимум 1 пост от вида «${s.profile.species}» в канал species.` : ''}
+            const voices = await voiceContext(s, [...s.lorePeople.map((p) => p.name), ...s.feed.slice(0, 12).map((p) => p.author), ...s.threads.filter((t) => t.kind === 'dm').map((t) => t.name)]);
+            if (S() !== s) return;
+            const r = await aiJSON(`${world(s)}${voices}\n\nСгенерируй 6 свежих публикаций в ленту CityHub от разных жителей города разных возрастов и профессий (есть и добрые, и неприятные люди).${loreStudentsLine(s)} Весь текст на русском, включая названия видов (имена могут быть любыми). Каналы: general, study, clubs, dorms, species.${s.profile.species ? ` Минимум 1 пост от вида «${s.profile.species}» в канал species.` : ''}
 Лента живая: жители общаются МЕЖДУ СОБОЙ. 3–4 поста — сюжетные линии: продолжение активных сюжетов (ссоры, романы, соперничество, розыгрыши, расследования, сплетни) или начало нового. Участники отвечают друг другу постами и упоминают друг друга через @Имя, сюжет развивается от ленты к ленте. Персонажи сюжетов реагируют на вмешательство ${name}.
 ${storyTxt ? `Активные сюжеты:\n${storyTxt}\n` : ''}${rels ? `Отношения ${name} в CityHub (могут всплывать в ленте — биффы, флирт, сплетни): ${rels}\n` : ''}${cancelled(s) ? `Сейчас ${name} «отменяют» в сети — это активно обсуждают.\n` : ''}1–2 поста могут обсуждать ${name}: реакцию на вид и способности по правилам выше.
 ${ctx().name2 && !ctx().groupId ? `Ровно 1 пост из 6 — от ${ctx().name2} (персонаж основной истории): в его характере и манере, о том, что он мог бы написать прямо сейчас — с учётом событий истории и не противореча текущей сцене. Подпись — как он представился бы в соцсети (имя, можно с фамилией).` : ''}
