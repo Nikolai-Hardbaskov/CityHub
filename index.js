@@ -1237,6 +1237,7 @@
         if (so.hate > 0) so.hate = Math.max(0, so.hate - 0.05);
         if (so.cancelledUntil && now >= so.cancelledUntil) { so.cancelledUntil = 0; so.hate = Math.min(so.hate, 40); ch = true; notify(s, '🌤️ Волна хейта утихла — вас больше не «отменяют».', 'important'); }
         if (cancelled(s)) so.followers = Math.max(0, so.followers - Math.floor(so.followers * 0.001));
+        if (tickLikes(s, now)) ch = true;
         const lvBoost = 1 + (levelOf(so) - 1) * 0.3;
         for (const p of s.feed) {
             if (!p.mine) continue;
@@ -1247,9 +1248,6 @@
             }
             const age = now - p.t;
             if (age < 2 * DAY) {
-                const rate = Math.max(1, Math.round(s.social.followers * (age < HOUR ? 0.04 : 0.008) * (cancelled(s) ? 0.15 : 1)));
-                const add = Math.floor(Math.random() * rate);
-                if (add) { p.likes = (p.likes || 0) + add; ch = true; }
                 if (age < 6 * HOUR && Math.random() < 0.25) {
                     const f = cancelled(s) ? 0 : Math.round((1 + Math.floor(Math.random() * Math.max(1, s.social.followers / 60))) * lvBoost);
                     s.social.followers += f; ch = true;
@@ -1578,6 +1576,47 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             for (const x of Array.isArray(r) ? r : []) if (x && x.author && x.text) s.feed.unshift({ id: uid(), author: cleanName(x.author), species: SP(s, x.species), channel: 'general', text: cleanMsg(x.text).slice(0, 500), likes: 50 + Math.floor(Math.random() * 500), t: Date.now(), comments: [], story: `Отмена ${s.profile.name}` });
         });
     }
+    /** Ограниченный охват: прогресс по реальному времени, а не числу вызовов таймера. */
+    function planLikes(s, item, parent = null, score = null, now = Date.now()) {
+        if (!item.mine) return false;
+        let e = item.engagement;
+        if (!e) {
+            const followers = Math.max(0, Number(soc(s).followers) || 0);
+            const reach = parent
+                ? 4 + followers * 0.1 + Math.sqrt(Math.max(0, Number(parent.likes) || 0)) * 2
+                : 8 + followers * 0.45;
+            e = item.engagement = { start: now, reach: Math.min(1000000, reach), variation: 0.65 + Math.random() * 0.7, earned: 0, target: 0, scored: false };
+        } else if (!score || e.scored) return false;
+        const a = clamp(Number(score?.authority) || 0, -5, 5);
+        const sentiment = String(score?.sentiment || 'mixed');
+        const reception = /neg|негатив/i.test(sentiment) ? 0.08 : /pos|позитив/i.test(sentiment) ? 1.2 : 0.55;
+        e.target = Math.max(e.earned, Math.round(e.reach * e.variation * reception * (1 + a * 0.08) * (cancelled(s) ? 0.15 : 1)));
+        if (score && typeof score === 'object') e.scored = true;
+        return true;
+    }
+    function tickLikes(s, now = Date.now()) {
+        let changed = false;
+        const grow = (item, parent) => {
+            if (!item.mine) return;
+            // Старые записи получают новый ограниченный охват, без начисления за всё прошлое.
+            if (!item.engagement && now - (item.t || now) >= 2 * DAY) return;
+            if (planLikes(s, item, parent, null, now)) changed = true;
+            const e = item.engagement;
+            if (!e) return;
+            const age = Math.max(0, now - e.start);
+            const progress = age >= 2 * DAY ? 1 : 1 - Math.exp(-age / (parent ? 20 * MIN : 45 * MIN));
+            const earned = Math.floor(e.target * progress);
+            const add = Math.max(0, earned - e.earned);
+            if (add) { item.likes = (Number(item.likes) || 0) + add; e.earned += add; changed = true; }
+        };
+        for (const p of s.feed) {
+            grow(p, null);
+            // Свои комментарии получают реакции и под чужими, в том числе старыми постами.
+            for (const c of p.comments || []) grow(c, p);
+        }
+        return changed;
+    }
+
     /** Оценка поста или комментария пользователя сообществом. */
     function applyScore(s, sc, p) {
         if (!sc || typeof sc !== 'object') return;
@@ -3331,7 +3370,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.27 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.28 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -3777,6 +3816,8 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     function engageMyPost(s, p) {
         enqueue(s, async () => {
             const list = await aiComments(s, p, 'Сгенерируй 5–7 комментариев от разных жителей, которые увидели этот пост. Иногда они отвечают друг другу (replyTo).', 'этот пост');
+            if (S() !== s || !s.feed.includes(p)) return;
+            planLikes(s, p, null, list.score);
             applyScore(s, list.score, p);
             if (list.followup) scheduleDM(s, list.followup, list.find((c) => c.author === cleanName(list.followup.from))?.species, `Пост ${s.profile.name}: «${p.text.slice(0, 200)}»\n${list.map((c) => `${c.author}: ${c.text}`).join('\n')}`);
             const now = Date.now();
@@ -3896,6 +3937,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             if (!text && !media) return toast('warning', 'Напишите текст поста или опишите фото.');
             const p = { id: uid(), author: s.profile.name, kind: kind || undefined, media: media || undefined, species: s.profile.privacy.species ? s.profile.species : '', channel: val('sh-post-ch') || 'general', text, likes: 0, mine: true, t: Date.now(), comments: [], commentsLoaded: true };
             s.feed.unshift(p);
+            planLikes(s, p);
             byId('sh-post').value = ''; if (byId('sh-post-media')) byId('sh-post-media').value = ''; if (byId('sh-post-kind')) byId('sh-post-kind').value = '';
             save(s); render();
             questEvent(s, 'post', 1, '', text);
@@ -3922,12 +3964,15 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             const parent = replyTo && (p.comments || []).find((c) => c.id === ui.replyToId && cleanName(c.author) === replyTo && !c.mine);
             const comment = { id: uid(), author: s.profile.name, text, t: Date.now(), likes: 0, mine: true, replyTo, replyToId: parent?.id || '' };
             (p.comments ||= []).push(comment);
+            planLikes(s, comment, p);
             byId('sh-cmt').value = ''; ui.replyTo = ''; ui.replyToId = ''; ui.replyPostId = '';
             p.loadingComments = true; save(s); render();
             const target = replyTo || (p.mine ? '' : p.author);
             const list = await aiComments(s, p, `${s.profile.name} только что написал(а) комментарий${replyTo ? ` в ответ ${replyTo}` : ''}: «${text}». Сгенерируй 1–3 ответа в ветке. ${target ? `${target} обязательно отвечает ${s.profile.name} (replyTo: "${s.profile.name}"). ` : 'Ответь от лица других жителей. '}Может подключиться ещё кто-то из комментаторов или новый житель.`, 'этот комментарий');
             p.loadingComments = false;
             if (S() !== s) return;
+            if (!s.feed.includes(p) || !p.comments?.includes(comment)) return;
+            planLikes(s, comment, p, list.score);
             applyScore(s, list.score, null);
             const fu = list.followup || guessFollowup(s, p, text, replyTo, list);
             if (fu) scheduleDM(s, fu, list.find((c) => c.author === cleanName(fu.from))?.species || s.feed.find((x) => x.author === cleanName(fu.from))?.species, `Пост ${p.author}: «${p.text.slice(0, 200)}»\n${shownComments(p).slice(-6).map((c) => `${c.author}: ${c.text}`).join('\n')}\n${list.map((c) => `${c.author}: ${c.text}`).join('\n')}`);
