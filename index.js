@@ -333,7 +333,7 @@
             tasks: [], strikes: [], grades: [],
             quarter: { n: 1, start: now }, lowGpaSince: 0, expelled: false, expelReason: '',
             wallet: { balance: cfg().startBalance, history: [], lastStipend: now },
-            feed: [], threads: [], npcVoices: [], social: { followers: 40 + Math.floor(Math.random() * 60), following: [], seed: 0 },
+            feed: [], threads: [], npcVoices: [], residentBadges: [], social: { followers: 40 + Math.floor(Math.random() * 60), following: [], seed: 0 },
             dating: { mode: 'love', profiles: [], matches: [], fSpecies: '', fAbility: '', fGender: '' },
             menu: MUNDANE_MENU.map((x) => ({ ...x, id: uid() })), orders: [],
             market: MUNDANE_MARKET.map((x) => ({ ...x, id: uid() })), listings: [], inventory: [], world: 'mundane',
@@ -362,6 +362,7 @@
             migrated.add(s);
         }
         reconcilePeople(s);
+        syncResidentBadges(s);
         return s;
     }
 
@@ -408,6 +409,7 @@
         for (const o of s.orders || []) if (o.kind === 'parcel') add(o.to);
         for (const p of s.personAliases || []) add(p.name, 1.5, p.aliases || []);
         for (const p of s.npcVoices || []) add(p.name, 4.5);
+        for (const p of s.residentBadges || []) add(p.name, 4.5);
         for (const n of Array.isArray(extra) ? extra : [extra]) add(n, 7);
         return out;
     }
@@ -572,6 +574,40 @@
         // Cache the post-migration shape too; repeated polls must be idempotent.
         peopleCache.delete(s);
         peopleIndex(s).reconciled = !deferred;
+    }
+
+    /** Verification belongs to a resident, not to each generated post/profile. */
+    function syncResidentBadges(s) {
+        const index = peopleIndex(s);
+        const resolve = (name) => index.names.get(nameSpelling(name)) || index.phonetic.get(personKey(name)) || cleanName(name);
+        const records = new Map();
+        for (const record of s.residentBadges || []) {
+            const name = resolve(record.name);
+            if (!name || nameSpelling(name) === nameSpelling(s.profile.name) || typeof record.verified !== 'boolean') continue;
+            const previous = records.get(name);
+            records.set(name, { name, verified: record.verified || previous?.verified === true });
+        }
+        const sources = new Map();
+        const add = (name, verified) => {
+            name = resolve(name);
+            if (!name || nameSpelling(name) === nameSpelling(s.profile.name) || records.has(name)) return;
+            if (!sources.has(name)) sources.set(name, []);
+            sources.get(name).push(verified);
+        };
+        for (const post of s.feed || []) if (!post.mine) add(post.author, post.verified);
+        for (const profile of [...(s.dating?.profiles || []), ...(s.dating?.matches || [])]) add(profile.name, profile.verified);
+        for (const [name, values] of sources) {
+            // Preserve an existing verified account when migrating contradictory old posts.
+            records.set(name, { name, verified: values.includes(true) || !values.includes(false) });
+        }
+        s.residentBadges = [...records.values()];
+    }
+    function residentVerified(s, name) {
+        name = canonicalName(s, name);
+        const known = s.residentBadges?.find((record) => record.name === name);
+        if (known) return known.verified === true;
+        syncResidentBadges(s);
+        return s.residentBadges.find((record) => record.name === name)?.verified === true;
     }
 
     function save(s) {
@@ -2629,7 +2665,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     function postHTML(p, s, full = false) {
         const n = shownComments(p).length;
         return `<article class="sh-card sh-post ${p.story ? 'story' : ''}">
-          <div class="sh-post-h">${ava(p.author, false, p.species)}<div>${p.mine ? `<b>${esc(p.author)}</b>` : nameBtn(p.author, '')}${(p.verified !== false && !p.mine) || (p.mine && levelOf(soc(s)) >= 5) ? ' <i class="fa-solid fa-circle-check sh-verified" title="Верифицирован"></i>' : ''}
+          <div class="sh-post-h">${ava(p.author, false, p.species)}<div>${p.mine ? `<b>${esc(p.author)}</b>` : nameBtn(p.author, '')}${(!p.mine && residentVerified(s, p.author)) || (p.mine && levelOf(soc(s)) >= 5) ? ' <i class="fa-solid fa-circle-check sh-verified" title="Верифицирован"></i>' : ''}
           <small>${p.species ? badge(p.species) : ''} ${esc(CHANNELS[p.channel] || '')}, ${fmtD(p.gt ?? p.t)}</small></div></div>
           ${p.story ? `<button class="sh-storytag" data-act="channel" data-ch="story:${esc(p.story)}"><i class="fa-solid fa-book-open"></i> ${esc(p.story)}</button>` : ''}${p.viral ? '<span class="sh-storytag hot"><i class="fa-solid fa-fire"></i> в тренде</span>' : ''}
           <div class="sh-post-t">${esc(normalizeMentions(p.text))}</div>
@@ -2802,7 +2838,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         </div>
         ${d.matches.length ? `<h4>Взаимные симпатии</h4><div class="sh-stories">${d.matches.map((m) => `<button class="sh-story" data-act="dm" data-name="${esc(m.name)}" data-species="${esc(m.species)}" data-bio="${esc(m.bio)}">${ava(m.name, true, m.species)}<small>${esc(m.name.split(' ')[0])}</small></button>`).join('')}</div>` : ''}
         ${d.profiles.length ? d.profiles.map((p) => `<article class="sh-card sh-profile">
-          <button class="sh-pbtn" data-act="go" data-view="dprofile" data-param="${p.id}"><div class="sh-post-h">${ava(p.name, true, p.species)}<div><b>${esc(p.name)}, ${esc(p.age)}</b>${p.verified ? ' <i class="fa-solid fa-circle-check sh-verified" title="Верифицирован"></i>' : ''}<small>${p.faculty ? badge(p.faculty, 'fac') : ''}</small></div><i class="fa-solid fa-chevron-right sh-pchev"></i></div>
+          <button class="sh-pbtn" data-act="go" data-view="dprofile" data-param="${p.id}"><div class="sh-post-h">${ava(p.name, true, p.species)}<div><b>${esc(p.name)}, ${esc(p.age)}</b>${residentVerified(s, p.name) ? ' <i class="fa-solid fa-circle-check sh-verified" title="Верифицирован"></i>' : ''}<small>${p.faculty ? badge(p.faculty, 'fac') : ''}</small></div><i class="fa-solid fa-chevron-right sh-pchev"></i></div>
           <p>${esc(p.bio)}</p><small class="sh-link">Открыть анкету</small></button>
           <div class="sh-compat"><span style="width:${clamp(+p.compat || 0, 0, 100)}%"></span></div>
           <small class="sh-muted">${mundane(s) ? 'Совместимость' : 'Совместимость видов'} ${clamp(+p.compat || 0, 0, 100)}%. ${esc(p.compatNote || '')}</small>
@@ -2817,7 +2853,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         if (!p) return head('Анкета') + empty('Анкета больше недоступна.');
         const row = (ic, label, v) => v ? `<div class="sh-prow"><i class="fa-solid ${ic}"></i><div><small>${label}</small><p>${esc(v)}</p></div></div>` : '';
         return `${head(`${p.name}, ${p.age}`, esc(p.faculty || ''))}
-        <div class="sh-card sh-person">${ava(p.name, true, p.species)}<div><b>${esc(p.name)}</b><small>${esc(p.age)} лет${p.faculty ? ` · ${esc(p.faculty)}` : ''}</small>${p.verified ? badge('верифицирован(а)') : ''}</div></div>
+        <div class="sh-card sh-person">${ava(p.name, true, p.species)}<div><b>${esc(p.name)}</b><small>${esc(p.age)} лет${p.faculty ? ` · ${esc(p.faculty)}` : ''}</small>${residentVerified(s, p.name) ? badge('верифицирован(а)') : ''}</div></div>
         <div class="sh-card">
           ${row('fa-user', 'Внешность', p.looks)}${row('fa-masks-theater', 'Характер', p.character)}${row('fa-briefcase', 'Профессия', p.faculty)}
           ${row('fa-palette', 'Хобби', p.hobbies)}${row('fa-heart', 'Любит', p.likes)}${row('fa-heart-crack', 'Не любит', p.dislikes)}${row('fa-magnifying-glass', 'Ищет в людях', p.seeks)}
@@ -3295,7 +3331,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.26 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.27 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
