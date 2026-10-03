@@ -740,6 +740,112 @@
         if (ex) parts.push(`Примеры речи персонажа (ориентир для стиля и манеры, не копируй дословно):\n${macros(ex).replace(/<START>/gi, '').trim().slice(0, 1800)}`);
         return parts.join('\n');
     }
+    // Factual card fields, without truncation or style examples/first-message candidates.
+    function relationshipCardSource() {
+        const c = ctx(), ch = c.characters?.[c.characterId];
+        return ['description', 'personality', 'scenario'].map((k) => String(field(ch, k) || '')).filter(Boolean).join('\n');
+    }
+    const quoteText = (t) => String(t || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    const escapeRE = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    function relationshipCardContext(s) {
+        const source = relationshipCardSource(), terms = /\{\{\s*user\s*\}\}|relationships?|отношени[яй]/giu;
+        const spans = [];
+        for (const m of source.matchAll(terms)) {
+            const a = Math.max(0, m.index - 250), b = Math.min(source.length, m.index + 1100);
+            if (spans.length && a <= spans.at(-1)[1]) spans.at(-1)[1] = b; else spans.push([a, b]);
+        }
+        if (!spans.length) for (const n of [ctx().name1, s.profile.name].filter(Boolean)) {
+            const i = source.toLowerCase().indexOf(n.toLowerCase()); if (i !== -1) spans.push([Math.max(0, i - 250), Math.min(source.length, i + 1100)]);
+        }
+        return macros(spans.map(([a, b]) => source.slice(a, b)).join('\n…\n').slice(0, 6000));
+    }
+    function modelCardPairFact(s, th, r) {
+        if (th.kind !== 'char' || r.cardRelationship?.pair !== true) return null;
+        const proof = quoteText(r.cardRelationship.evidence), source = quoteText(macros(relationshipCardSource()));
+        if (proof.length < 12 || proof.length > 800 || !source.includes(proof)) return null;
+        const user = new RegExp(`(?:${[ctx().name1, s.profile.name].filter(Boolean).map(escapeRE).join('|')})(?![\\p{L}\\p{N}])`, 'iu');
+        if (!user.test(proof) || !/girlfriend|boyfriend|wife|husband|fianc[eé]|dating|romantic relationship|couple|девушк|парень|парнем|жена|женой|муж(?:ем)?\b|жених|невест|встреча(?:ются|емся)|романтическ|пара/iu.test(proof)
+            || /\?|\b(?:not|no longer|never|if|wish\w*|want\w*|would|could|ex[- ]|broke up)\b|если|бывш|хочет|хотел|больше не|расстал|не (?:пара|девушка|встреча)/iu.test(proof)) return null;
+        return { pair: true, evidence: proof, source: 'card' };
+    }
+    function relationCardKey(s, th) {
+        return th.kind === 'char' ? String(hash(JSON.stringify([relationshipCardSource(), ctx().name1, s.profile.name, ctx().name2, th.name]))) : '';
+    }
+    function cardPairFact(s, th) {
+        if (th.kind !== 'char') return null;
+        const source = relationshipCardSource().replace(/<[^>]+>/g, '').replace(/[*_`]/g, '');
+        const names = (macro, values) => `(?:\\{\\{\\s*${macro}\\s*\\}\\}|${[...new Set(values.filter(Boolean))].map(escapeRE).join('|')})(?![\\p{L}\\p{N}])`;
+        const user = names('user', [ctx().name1, s.profile.name]), char = names('char', [ctx().name2, th.name]);
+        const role = '(?:girlfriend|boyfriend|wife|husband|fianc[eé]e?)';
+        const owner = `(?:his|her|their|${char}['’]s)`;
+        const ruRole = '(?:девушка|девушкой|парень|парнем|жена|женой|муж|мужем|невеста|невестой|жених|женихом)';
+        const patterns = [
+            `${user}\\s+is\\s+${owner}\\s+${role}\\b`,
+            `${char}['’]s\\s+${role}\\s+is\\s+${user}`,
+            `${char}\\s+is\\s+${user}['’]s\\s+${role}\\b`,
+            `${user}\\s*(?:[—–-]\\s*|является\\s+|это\\s+)?(?:его|её|ее)\\s+${ruRole}(?![\\p{L}\\p{N}])`,
+            `${user}\\s*(?:[—–-]\\s*|является\\s+|это\\s+)?${ruRole}\\s+${char}`,
+            `(?:${user}\\s+(?:and|и)\\s+${char}|${char}\\s+(?:and|и)\\s+${user})\\s+(?:(?:are|уже|давно|сейчас)\\s+)*(?:dating|in\\s+(?:a\\s+)?(?:serious\\s+)?(?:romantic\\s+)?relationship|встречаются|женаты|пара)(?![\\p{L}\\p{N}])`,
+        ];
+        for (const pattern of patterns) for (const m of source.matchAll(new RegExp(pattern, 'giu'))) {
+            const before = source.slice(Math.max(0, m.index - 80), m.index).split(/[.!?;\n]/).at(-1);
+            const after = source.slice(m.index + m[0].length, m.index + m[0].length + 180).split(/[.!?;\n]/)[0];
+            if (/\b(?:if|suppose|imagine|might|could|would|not true)\b|если|возможно|допустим|представь|неправда|неверно/i.test(before)
+                || /\b(?:no longer|used to|broke up|separated|ex[- ]|if)\b|больше не|бывш|расстал|разошл|если/i.test(after)) continue;
+            return { pair: true, evidence: m[0], source: 'card' };
+        }
+        return null;
+    }
+    const PAIR_END = /\bbreak(?:ing)? up\b|\bbroke up\b|\bbroken up\b|\bno longer (?:a couple|dating|together)\b|\b(?:relationship|romance|marriage) (?:is |was )?over\b|\bdivorc(?:e|ed|ing)\b|расста(?:лись|ёмся|емся)|разрыв (?:отношений|романа)|отношени[яй].{0,30}(?:окончены|закончены|закончились)|больше не (?:пара|встречаемся|встречаются)|между нами (?:всё|все) кончено|развод(?:имся|ятся)?/i;
+    const PAIR_START = /\b(?:we|they)(?:\s+are|['’]re) (?:now |officially |still )*(?:dating|married|back together|a couple|in a relationship)\b|\b(?:started|began) dating\b|\b(?:got married|are back together)\b|\b(?:is|are|['’]re) (?:my|your|his|her) (?:girlfriend|boyfriend|wife|husband)\b|(?:снова|теперь|мы|они).{0,25}(?:пара|встречаемся|встречаются)|поженились|женаты|начали встречаться|возобновили отношения/i;
+    function pairQuote(s, th, source, evidence, recentOnly = false) {
+        const quote = quoteText(evidence);
+        if (quote.length < 12 || quote.length > 450 || !['story', 'dm'].includes(source)) return null;
+        const list = source === 'story' ? (ctx().chat || []) : th.msgs;
+        const start = recentOnly ? Math.max(0, list.length - (source === 'story' ? 20 : 10)) : 0;
+        for (let i = list.length - 1; i >= start; i--) {
+            const m = list[i];
+            if (m?.is_system || m?.sys) continue;
+            const text = quoteText(source === 'story' ? m?.mes : m?.text), offset = text.indexOf(quote);
+            if (offset !== -1) return { index: i, offset, evidence: quote, source };
+        }
+        return null;
+    }
+    function resolvePair(s, th, r, fact, opening, previousAccepted) {
+        if (opening) return { pair: !!fact || r.pair === true || r.pair === 'true', known: !!fact, evidence: fact?.evidence || '' };
+        const hadMemory = !!th.pairMemory;
+        let memory = th.pairMemory;
+        if (memory) {
+            const anchor = pairQuote(s, th, memory.source, memory.evidence);
+            if (!anchor) memory = null;
+            else {
+                const moved = anchor.index - memory.index;
+                memory = { ...memory, index: anchor.index, offset: anchor.offset,
+                    storyLength: Math.min((ctx().chat || []).length, memory.storyLength + (memory.source === 'story' ? moved : 0)),
+                    dmLength: Math.min(th.msgs.length, memory.dmLength + (memory.source === 'dm' ? moved : 0)) };
+            }
+        }
+        let pair = memory ? memory.pair : !!fact || (!hadMemory && (!!(th.kind === 'char' && s.profile.relWithChar) || !!(previousAccepted && th.pair)));
+        let evidence = memory?.evidence || fact?.evidence || '', known = !!memory || !!fact || pair;
+        const change = r.pairChange, next = change?.state === 'together' ? true : change?.state === 'apart' ? false : null;
+        const proof = next === null ? null : pairQuote(s, th, change.source, change.evidence, true);
+        const actor = (names) => new RegExp(`(?:${names.filter(Boolean).map(escapeRE).join('|')})(?![\\p{L}\\p{N}])`, 'iu');
+        const charNames = [th.name, th.kind === 'char' ? ctx().name2 : ''];
+        for (const n of [...charNames]) { const first = cleanName(n).split(' ')[0]; if (samePerson(s, first, th.name)) charNames.push(first); }
+        const scoped = proof && (/\b(?:we|our|us|you|your)\b|(?:^|[^а-яё])(?:мы|нам|нами|нас|наши|наш|наша|ты|твой|твоя)(?![а-яё])/i.test(proof.evidence)
+            || (actor([ctx().name1, s.profile.name]).test(proof.evidence) && actor(charNames).test(proof.evidence)));
+        const hypothetical = proof && /\?|\b(?:not|never|if|wish|want|would|could|didn['’]t|don['’]t)\b|если|хочу|хотел|не (?:пара|встречаемся|расстались|расстаёмся|расстаемся|женаты)|расстались (?:у|на|возле|около|до|чтобы)(?:\s|[,.;]|$)/i.test(proof.evidence);
+        const explicit = proof && scoped && !hypothetical && (next ? PAIR_START.test(proof.evidence) && !PAIR_END.test(proof.evidence) : PAIR_END.test(proof.evidence));
+        const later = !memory || (proof && (proof.source === memory.source
+            ? proof.index > memory.index || (proof.index === memory.index && (proof.offset > memory.offset || (proof.offset === memory.offset && next === memory.pair)))
+            : proof.index >= (proof.source === 'story' ? memory.storyLength : memory.dmLength)));
+        if (explicit && later) {
+            pair = next; evidence = proof.evidence; known = true;
+            memory = { ...proof, pair, storyLength: (ctx().chat || []).length, dmLength: th.msgs.length };
+        }
+        th.pairMemory = memory;
+        return { pair, known, evidence };
+    }
     /** Последние сообщения основного чата — чтобы персонаж помнил сюжет. */
     function recentStory(n) {
         const chat = ctx().chat || [];
@@ -1435,28 +1541,33 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     }
     function needsRelSync(s, th) {
         if (th.relSyncing || !relevantForSync(s, th)) return false;
-        return th.relStoryRevision !== storyRevision();
+        return th.relStoryRevision !== storyRevision() || th.relPolicyVersion !== 2 || th.relCardRevision !== relationCardKey(s, th);
     }
     /** Определяет текущие отношения по карточке, основной истории и переписке (история важнее карточки). */
     async function syncRel(s, th) {
         if (th.relSyncing) return;
         const revision = storyRevision(), epoch = storySyncEpoch;
+        const cardRevision = relationCardKey(s, th);
         const dmRevision = hash(JSON.stringify(th.msgs));
         const opening = !hasStoryProgress();
         const previousAccepted = th.relStoryAccepted ?? hasStoryProgress((ctx().chat || []).slice(0, th.relSyncLen || 0));
         th.relSyncing = true; render();
         try {
             const c = ctx(), ch = c.characters?.[c.characterId];
+            const fact = cardPairFact(s, th);
             const lp = lorePerson(s, th.name);
             const about = th.kind === 'char'
-                ? `${charCard()}${field(ch, 'first_mes') ? `\nПервое сообщение истории: ${macros(field(ch, 'first_mes')).slice(0, 1200)}` : ''}`
+                ? `${charCard()}\nФрагменты об отношениях из полных фактических полей карточки:\n${relationshipCardContext(s)}${field(ch, 'first_mes') ? `\nПервое сообщение истории: ${macros(field(ch, 'first_mes')).slice(0, 1200)}` : ''}`
                 : `${th.name}${th.species ? ` (${th.species})` : ''}. ${th.bio || ''}${lp ? ` Из лора: ${lp.bio}${lp.relation ? `; для ${c.name2}: ${lp.relation}` : ''}.` : ''}`;
             const dms = th.msgs.filter((m) => !m.sys).slice(-10).map((m) => `${m.me ? s.profile.name : th.name}: ${m.text}`).join('\n');
-            const r = await aiJSON(`${about}\n\nПоследние события основной истории:\n${recentStory(20) || '(истории пока нет)'}\n\nПереписка в CityHub:\n${dms || '(не переписывались)'}\n\nОпредели, какие СЕЙЧАС отношения у ${th.name} с ${s.profile.name}. Опирайся на факты: история и переписка важнее карточки — если по карточке они не знакомы, а в истории уже подружились или начали встречаться, верь истории. Если они ещё ни разу не общались и не знакомы — known: false.\nТакже оцени доступность ${th.name} для мессенджера ПО ФАКТАМ текущей сцены: сон, вождение, работа, занятие, операция, бой и другие дела, не позволяющие переписываться. Не считай занятой всю профессию постоянно; если человек просто разговаривает, гуляет или отдыхает, busy:false. В presence верни busy (boolean), reason (короткую причину), until (ГГГГ-ММ-ДД ЧЧ:ММ только если конец занятности явно известен, иначе null).\nФормат: {"known":true,"rel":число от −100 (вражда) до 100 (самые близкие),"status":"короткий статус по-русски: не знакомы, знакомые, приятели, друзья, близкие друзья, флирт, пара, соперники, неприязнь, вражда…","pair":true если они сейчас в романтических отношениях,"note":"одной фразой, на чём основан вывод","presence":{"busy":false,"reason":"","until":null}}`);
+            const r = await aiJSON(`${about}\n\n${fact ? `Подтверждённый исходный факт из ПОЛНОЙ карточки: «${macros(fact.evidence)}». Это относится к ${s.profile.name}; имя персоны ${c.name1} и имя профиля CityHub обозначают одного пользователя. Они уже знакомы и являются парой. Отсутствие переписки, работы вместе, упоминания романтики в последних сообщениях, обычная ссора, занятость или физическое расстояние этот факт не отменяют.` : ''}${th.pairMemory ? `\nПоследнее подтверждённое изменение отношений: ${th.pairMemory.pair ? 'пара' : 'расстались'}, «${th.pairMemory.evidence}».` : ''}\n\nПоследние события основной истории:\n${recentStory(20) || '(истории пока нет)'}\n\nПереписка в CityHub:\n${dms || '(не переписывались)'}\n\nОпредели, какие СЕЙЧАС отношения у ${th.name} с ${s.profile.name}. Карточка задаёт исходные отношения; продолжение истории и переписка меняют их только при явных событиях, а не при отсутствии упоминаний. Если в карточке пользователь — девушка, парень или супруг персонажа, known:true и pair:true сохраняются до явно состоявшегося расставания/развода. Пример: полицейский на патруле по-прежнему может иметь девушку. Опирайся на факты: состоявшиеся изменения истории и переписки важнее исходной карточки — если по карточке они не знакомы, а в истории уже подружились или начали встречаться, верь истории. Если они ещё ни разу не общались и не знакомы — known: false.\nВ cardRelationship отдельно укажи исходную пару из description/personality/scenario: pair:true только если явно сказано, что именно пользователь и этот персонаж уже встречаются/супруги; evidence — точная цитата факта из карточки с именем пользователя. Предпочтения, чужие и бывшие отношения, желания и примеры речи не являются подтверждением. При отсутствии такого факта pair:false и evidence пустая строка.\nВ pairChange верни последнее явно СОСТОЯВШЕЕСЯ изменение романтического статуса именно этих двух людей: state=together (стали/снова стали парой), apart (расстались/развелись), unchanged (такого события нет). source=story или dm, evidence=дословная цитата события из соответствующего текста, не менее 12 символов. Не путай физическую разлуку, ссору, просьбу/предложение встречаться, гипотезы и историю отношений с другими людьми с изменением этой пары. Для unchanged evidence пустая строка. Статус пары не равен настроению или баллу близости.\nТакже оцени доступность ${th.name} для мессенджера ПО ФАКТАМ текущей сцены: сон, вождение, работа, занятие, операция, бой и другие дела, не позволяющие переписываться. Не считай занятой всю профессию постоянно; если человек просто разговаривает, гуляет или отдыхает, busy:false. В presence верни busy (boolean), reason (короткую причину), until (ГГГГ-ММ-ДД ЧЧ:ММ только если конец занятности явно известен, иначе null).\nФормат: {"known":true,"rel":число от −100 (вражда) до 100 (самые близкие),"status":"короткий статус по-русски: не знакомы, знакомые, приятели, друзья, близкие друзья, флирт, пара, соперники, неприязнь, вражда…","pair":true если они сейчас в романтических отношениях,"note":"одной фразой, на чём основан вывод","cardRelationship":{"pair":false,"evidence":""},"pairChange":{"state":"unchanged","source":"story","evidence":""},"presence":{"busy":false,"reason":"","until":null}}`);
             if (S() !== s || epoch !== storySyncEpoch || revision !== storyRevision()
-                || dmRevision !== hash(JSON.stringify(th.msgs)) || !r || typeof r !== 'object') return;
-            th.known = r.known !== false;
-            th.rel = clamp(Math.round(+r.rel || 0), -100, 100);
+                || cardRevision !== relationCardKey(s, th) || dmRevision !== hash(JSON.stringify(th.msgs)) || !r || typeof r !== 'object' || Array.isArray(r)) return;
+            const basis = fact || modelCardPairFact(s, th, r);
+            const resolved = resolvePair(s, th, r, basis, opening, previousAccepted);
+            const rejectedUnknown = resolved.known && (r.known === false || /не знакомы|незнаком|stranger/i.test(String(r.status || '')));
+            th.known = resolved.known || r.known !== false;
+            th.rel = rejectedUnknown ? (th.rel || 0) : clamp(Math.round(+r.rel || 0), -100, 100);
             th.relAtSync = th.rel;
             if (!opening) updateContactAvailability(s, th, r.presence);
             // Оценка вступления — предварительная: без ссор, примирений и смены статуса пары.
@@ -1471,13 +1582,19 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             }
             th.status = th.known ? cleanMsg(r.status || '').slice(0, 30).toLowerCase() : 'не знакомы';
             th.relNote = cleanMsg(r.note || '').slice(0, 200);
-            th.pair = r.pair === true || r.pair === 'true';
+            th.pair = resolved.pair;
+            if (th.pair && (rejectedUnknown || !/ссор|конфликт|неприяз|вражд/i.test(th.status))) th.status = 'пара';
+            if (!th.pair && rejectedUnknown) th.status = th.pairMemory?.pair === false ? 'бывшая пара' : 'знакомые';
+            if (!th.pair && /^(?:пара|в отношениях|couple)$/.test(th.status)) th.status = th.pairMemory?.pair === false ? 'бывшая пара' : '';
+            if (resolved.evidence && (rejectedUnknown || (r.pair === true || r.pair === 'true') !== th.pair)) th.relNote = `${th.pair ? 'Пара' : 'Отношения завершены'}: ${macros(resolved.evidence)}`.slice(0, 300);
             th.relSyncLen = (ctx().chat || []).length;
             th.relStoryRevision = revision;
+            th.relPolicyVersion = 2;
+            th.relCardRevision = cardRevision;
             th.relStoryAccepted = !opening;
             if (!opening && th.kind === 'char' && th.pair !== !!s.profile.relWithChar) {
                 s.profile.relWithChar = th.pair;
-                notify(s, th.pair ? `💞 По истории вы с ${th.name} — пара. Отмечено в профиле.` : `По истории вы с ${th.name} сейчас не пара. Отметка в профиле снята.`, 'social');
+                notify(s, th.pair ? `💞 ${basis && !th.pairMemory ? 'По карточке' : 'По истории'} вы с ${th.name} — пара. Отмечено в профиле.` : `По истории вы с ${th.name} сейчас не пара. Отметка в профиле снята.`, 'social');
             }
             save(s);
         } finally { th.relSyncing = false; render(); }
@@ -1865,7 +1982,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
     const storySessions = new WeakMap();
     const storyMessageId = (m, i) => `${m.send_date || m.gen_started || i}:${m.name || ''}`;
     const storyMessageKey = (m) => `${m.swipe_id ?? ''}:${hash(String(m.mes || ''))}`;
-    const relationAttemptKey = (th, revision) => `${revision}:${hash(JSON.stringify(th.msgs))}`;
+    const relationAttemptKey = (th, revision, s) => `${revision}:2:${relationCardKey(s, th)}:${hash(JSON.stringify(th.msgs))}`;
     function storyRevision() {
         const c = ctx();
         return String(hash(JSON.stringify([c.name1, c.name2, (c.chat || []).map((m) =>
@@ -1927,7 +2044,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
                 for (const th of s.threads.filter((t) => relevantForSync(s, t))) {
                     if (S() !== s || epoch !== storySyncEpoch || mainGenerating) return;
                     const revision = storyRevision();
-                    const attempt = relationAttemptKey(th, revision);
+                    const attempt = relationAttemptKey(th, revision, s);
                     if (!needsRelSync(s, th) || th.relSyncing || session.relationAttempts.get(th) === attempt) continue;
                     session.relationAttempts.set(th, attempt);
                     await syncRel(s, th);
@@ -1985,7 +2102,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             }
         }
         // Новая переписка с персонажем тоже получает отношения, даже при закрытом окне.
-        if (s.threads.some((th) => needsRelSync(s, th) && session.relationAttempts.get(th) !== relationAttemptKey(th, revision))) session.dirty = true;
+        if (s.threads.some((th) => needsRelSync(s, th) && session.relationAttempts.get(th) !== relationAttemptKey(th, revision, s))) session.dirty = true;
         if (session.dirty || session.replies.size) queueStorySync(s, session);
         updateInjection();
         if (changed) render();
@@ -2981,7 +3098,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.20 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.21 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
