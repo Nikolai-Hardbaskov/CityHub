@@ -482,3 +482,5 @@
 #cityhub-phone .sh-mediain { flex-wrap: nowrap !important; margin: 6px 0; }
 #cityhub-phone .sh-mediain select { flex: 0 0 auto; width: auto; max-width: 42%; }
 #cityhub-phone .sh-mediain input { flex: 1; min-width: 0; }
+
+#cityhub-phone .sh-cmt-quote { display: block; border-left: 2px solid var(--sh-line); padding-left: 7px; margin-bottom: 5px; font-size: 11px; color: var(--sh-mute); overflow-wrap: anywhere; }

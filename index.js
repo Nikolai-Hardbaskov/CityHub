@@ -2757,23 +2757,80 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const re = new RegExp(`^(?:\\s*@*\\s*${escRe(name)}(?=$|[\\s@,:;.!?])[,;:!.?]?\\s*)+`, 'i');
         return text.replace(re, '').trim();
     }
-    function commentHTML(c, p) {
-        c = { ...c, replyTo: cleanName(c.replyTo) };
+    /** Восстановление старых ответов только при однозначном адресате. ID важнее имени. */
+    function commentThreads(p) {
+        const all = p.comments || [], prior = [], ids = new Set();
+        for (const c of all) {
+            if (!c.id || ids.has(c.id)) c.id = uid();
+            ids.add(c.id);
+            if (c.replyToId === undefined) {
+                const matches = c.replyTo ? prior.filter((x) => nameSpelling(x.author) === nameSpelling(c.replyTo)) : [];
+                c.replyToId = matches.length === 1 ? matches[0].id : '';
+            }
+            prior.push(c);
+        }
+        const visible = shownComments(p), byId = new Map(visible.map((c) => [c.id, c]));
+        const parents = new Map();
+        for (const c of visible) {
+            let parent = byId.get(c.replyToId);
+            const visited = new Set([c.id]);
+            for (let x = parent; x; x = byId.get(x.replyToId)) {
+                if (visited.has(x.id)) { parent = null; break; }
+                visited.add(x.id);
+            }
+            if (parent) parents.set(c.id, parent);
+        }
+        const children = new Map(), roots = [];
+        for (const c of visible) {
+            const parent = parents.get(c.id);
+            if (!parent) roots.push(c);
+            else { if (!children.has(parent.id)) children.set(parent.id, []); children.get(parent.id).push(c); }
+        }
+        const rows = [], stack = roots.slice().reverse().map((c) => ({ c, depth: 0, parent: null }));
+        while (stack.length) {
+            const row = stack.pop(); rows.push(row);
+            const replies = children.get(row.c.id) || [];
+            for (let i = replies.length - 1; i >= 0; i--) stack.push({ c: replies[i], depth: row.depth + 1, parent: row.c });
+        }
+        return rows;
+    }
+    /** ID модели действуют только внутри одного ответа; в хранилище — собственные ID. */
+    function bindCommentReplies(s, p, raw, list, focusId = '') {
+        const existing = shownComments(p), local = new Map(), duplicate = new Set();
+        raw.forEach((c, i) => { if (c.id) { if (local.has(c.id)) duplicate.add(c.id); else local.set(c.id, i); } });
+        list.forEach((c, i) => {
+            const requested = raw[i].replyToId;
+            let parent;
+            if (requested) {
+                parent = existing.find((x) => x.id === requested);
+                const j = local.get(requested);
+                if (!parent && !duplicate.has(requested) && j < i) parent = list[j];
+            } else if (requested === undefined && c.replyTo) {
+                const candidates = [...existing, ...list.slice(0, i)].filter((x) => samePerson(s, x.author, c.replyTo));
+                const focus = candidates.find((x) => x.id === focusId);
+                parent = focus || (candidates.length === 1 ? candidates[0] : null);
+            }
+            c.replyToId = parent?.id || '';
+            if (parent) c.replyTo = parent.author;
+        });
+    }
+    function commentHTML(c, p, depth = 0, parent = null) {
+        c = { ...c, replyTo: cleanName(parent?.author || c.replyTo) };
         const to = c.replyTo ? `<span class="sh-at">@${esc(c.replyTo)}</span> ` : '';
         c = { ...c, text: stripMention(c.text, c.replyTo) };
-        return `<div class="sh-cmt ${c.replyTo ? 'reply' : ''} ${c.mine ? 'mine' : ''}">${ava(c.author, false, c.mine ? S()?.profile.species : c.species)}
-          <div><div class="sh-cmt-b">${c.mine ? `<b>${esc(c.author)}</b>` : nameBtn(c.author, c.species)}<p>${to}${esc(c.text)}</p></div>
+        return `<div class="sh-cmt ${parent ? 'reply' : ''} ${c.mine ? 'mine' : ''}" style="margin-left:${Math.min(depth, 2) * 16}px" data-comment-id="${esc(c.id)}">${ava(c.author, false, c.mine ? S()?.profile.species : c.species)}
+          <div><div class="sh-cmt-b">${c.mine ? `<b>${esc(c.author)}</b>` : nameBtn(c.author, c.species)}<p>${parent ? `<span class="sh-cmt-quote">В ответ ${esc(parent.author)}: «${esc(String(parent.text || '').slice(0, 100))}»</span>` : ''}${to}${esc(c.text)}</p></div>
           <div class="sh-cmt-a"><span>${fmtT(c.gt ?? c.t)}</span>
             <button data-act="cLike" data-post="${p.id}" data-id="${c.id}" class="${c.liked ? 'on' : ''}"><i class="fa-${c.liked ? 'solid' : 'regular'} fa-heart"></i> ${c.likes || 0}</button>
-            ${c.mine ? '' : `<button data-act="replyTo" data-name="${esc(c.author)}" data-id="${esc(c.id)}" data-post="${esc(p.id)}">Ответить</button>`}</div></div></div>`;
+            ${`<button data-act="replyTo" data-name="${esc(c.author)}" data-id="${esc(c.id)}" data-post="${esc(p.id)}">Ответить</button>`}</div></div></div>`;
     }
     function postView(s, id) {
         const p = s.feed.find((x) => x.id === id);
         if (!p) return head('Пост') + empty('Пост удалён.');
         if (!p.mine && !p.commentsLoaded && !p.loadingComments) setTimeout(() => ACT.genComments({ id: p.id }, null, s), 0);
-        const list = shownComments(p);
+        const list = commentThreads(p);
         return `${head('Пост', esc(p.author))}${postHTML(p, s, true)}
-        <div class="sh-cmts">${list.length ? list.map((c) => commentHTML(c, p)).join('') : ''}
+        <div class="sh-cmts">${list.length ? list.map(({ c, depth, parent }) => commentHTML(c, p, depth, parent)).join('') : ''}
         ${p.loadingComments ? '<div class="sh-sys"><i class="fa-solid fa-ellipsis fa-fade"></i> пишут комментарии…</div>' : ''}
         ${!list.length && !p.loadingComments ? '<div class="sh-sys">Комментариев пока нет.</div>' : ''}</div>
         <div class="sh-composer">
@@ -3370,7 +3427,7 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
 
     function logText() {
         const c = ctx();
-        const head = `CityHub 1.0.28 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
+        const head = `CityHub 1.0.29 | ${navigator.userAgent} | API: ${c.mainApi || c.main_api || '?'} | generateRaw: ${typeof c.generateRaw} | loadWorldInfo: ${typeof c.loadWorldInfo} | setExtensionPrompt: ${typeof c.setExtensionPrompt}`;
         return [head, ...LOG.map((l) => `[${fmtD(l.t)}] ${l.where}: ${l.text}`)].join('\n\n');
     }
     function logView() {
@@ -3745,9 +3802,20 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         return `\n${c} (персонаж основной истории) МОЖЕТ оставить комментарий, но не обязан. Его отношения с ${s.profile.name}: ${rel}.${quarrel} Реши по его собственному характеру и этим отношениям, будет ли он отвечать и как. Не своди близость к обязательной поддержке, вражду к язвительности, а ссору к обязательной грубости: сохраняй индивидуальные реакции и манеру речи из источников; незнакомец обычно не комментирует. Если молчание уместнее — не включай его. Не противоречь текущей сцене.`;
     }
     const postText = (p) => `${p.text || ''}${p.media ? ` [${p.kind === 'video' ? 'видео' : 'фото'}: ${p.media}]` : ''}`;
-    async function aiComments(s, p, task, scoreWhat) {
+    async function aiComments(s, p, task, scoreWhat, focusId = '') {
+        commentThreads(p);
+        task += '\nКаждый новый комментарий получает уникальный id (например new1). replyToId — точный id комментария, на который отвечаешь, или пустая строка для ответа на сам пост. Можно ссылаться на существующий комментарий или на более ранний новый комментарий в этом массиве. Имя replyTo должно соответствовать автору выбранного комментария. Не путай разные реплики одного автора.';
+        if (focusId) task += `\nТолько что отправленный комментарий имеет id=${focusId}; непосредственные ответы на него указывают именно этот replyToId.`;
         task += '\nДля ответа укажи имя адресата в replyTo без @. Не добавляй то же обращение в начало text: приложение покажет @Имя само.';
-        const prev = shownComments(p).slice(-12).map((c) => `${c.author}${c.replyTo ? ` → ${c.replyTo}` : ''}: ${c.text}`).join('\n');
+        const context = shownComments(p).slice(-12), contextIds = new Set(context.map((c) => c.id));
+        let ancestor = (p.comments || []).find((c) => c.id === focusId);
+        const visited = new Set();
+        while (ancestor && !visited.has(ancestor.id)) {
+            visited.add(ancestor.id);
+            if (!contextIds.has(ancestor.id)) { context.unshift(ancestor); contextIds.add(ancestor.id); }
+            ancestor = (p.comments || []).find((c) => c.id === ancestor.replyToId);
+        }
+        const prev = context.map((c) => `[id=${c.id}; replyToId=${c.replyToId || ''}] ${c.author}${c.replyTo ? ` → ${c.replyTo}` : ''}: ${c.text}`).join('\n');
         const st = p.story ? s.stories.find((x) => x.title === p.story) : null;
         const ctxLines = [
             st ? `Пост — часть сюжетной линии «${st.title}» (участники: ${st.cast.join(', ')}): ${st.summary}` : '',
@@ -3756,14 +3824,16 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
         const voices = await voiceContext(s, [p.author, ...shownComments(p).map((c) => c.author), ...s.lorePeople.map((p) => p.name), ...s.threads.filter((t) => t.kind === 'dm').map((t) => t.name), ...s.npcVoices.map((v) => v.name)]);
         if (S() !== s) return [];
         const scoreFmt = scoreWhat ? `\nТакже оцени ${scoreWhat} ${s.profile.name}: authority (−5…5 — насколько это подняло авторитет ${s.profile.name}: остроумие, смелость, поддержка, интересная мысль — плюс; грубость, кринж, глупость — минус), controversy (0…10 — насколько спорно или токсично), sentiment (positive, mixed или negative — как восприняло сообщество). Реакция комментаторов должна соответствовать оценке.\nЕсли кто-то из комментаторов пообещал написать ${s.profile.name} в личку, начал договариваться с ней/ним о встрече или явно хочет продолжить разговор наедине — заполни followup: {"from":"имя этого комментатора","is_char":true если это ${ctx().name2} — персонаж основной истории, иначе false,"intent":"что он(а) напишет в личке — например, уточнит день, время и место встречи"}. Иначе followup: null.` : '';
-        const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${postText(p)}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии короткие, но каждый автор пишет в собственной манере по правилам голоса выше; не добавляй эмоции, эмодзи и сленг всем подряд. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"author":"Имя","species":"вид","text":"до 200 символов","replyTo":"имя или пустая строка","likes":3,"voice":null}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
+        const r = await aiJSON(`${world(s)}${voices}\n\n${NPC_VOICE_FORMAT}\n\nЛента соцсети CityHub. Пост от ${p.author}${p.species ? ` (${p.species})` : ''}${p.mine ? ` — это ${s.profile.name}, пользователь; комментаторы реагируют и на сам пост, и на автора по правилам выше` : ''}:\n«${postText(p)}»${p.media ? `\n[вложение: ${p.media}]` : ''}\n${prev ? `\nУже есть комментарии:\n${prev}\n` : ''}${ctxLines ? `\n${ctxLines}\n` : ''}${loreStudentsLine(s, 8)}${ctx().name2 && !ctx().groupId && (p.mine || Math.random() < 0.4) ? charCommentRule(s) : ''}\n${task}\nКомментарии короткие, но каждый автор пишет в собственной манере по правилам голоса выше; не добавляй эмоции, эмодзи и сленг всем подряд. Всё на русском, виды тоже на русском. Не повторяй уже написанное.${scoreFmt}\nФормат: ${scoreWhat ? '{"comments":[' : '['}{"id":"new1","author":"Имя","species":"вид","text":"до 200 символов","replyToId":"id адресата или пустая строка","replyTo":"имя или пустая строка","likes":3,"voice":null}]${scoreWhat ? ',"score":{"authority":1,"controversy":0,"sentiment":"positive"},"followup":null}' : ''}`);
         if (S() !== s) return [];
         const arr = Array.isArray(r) ? r : (Array.isArray(r?.comments) ? r.comments : []);
         if (rememberNpcVoices(s, arr.filter((c) => c && c.author && c.text))) save(s);
-        const list = arr.filter((c) => c && c.author && c.text && cleanName(c.author) !== s.profile.name).slice(0, 8).map((c) => ({
+        const raw = arr.filter((c) => c && c.author && c.text && cleanName(c.author) !== s.profile.name).slice(0, 8);
+        const list = raw.map((c) => ({
             id: uid(), author: canonicalName(s, c.author), species: SP(s, c.species), text: stripMention(cleanMsg(c.text), cleanName(c.replyTo)).slice(0, 400),
             replyTo: canonicalName(s, c.replyTo), likes: Math.max(0, parseInt(c.likes, 10) || 0), liked: false,
         }));
+        bindCommentReplies(s, p, raw, list, focusId);
         list.score = r && !Array.isArray(r) ? r.score : null;
         list.followup = r && !Array.isArray(r) && r.followup && typeof r.followup === 'object' && r.followup.from ? r.followup : null;
         return list;
@@ -3961,14 +4031,14 @@ ${scene ? `Текущий момент истории: ${scene}\n` : ''}${story 
             const text = normalizeMentions(val('sh-cmt'));
             if (!p || !text) return;
             const replyTo = !ui.replyPostId || ui.replyPostId === p.id ? cleanName(ui.replyTo) : '';
-            const parent = replyTo && (p.comments || []).find((c) => c.id === ui.replyToId && cleanName(c.author) === replyTo && !c.mine);
+            const parent = replyTo && (p.comments || []).find((c) => c.id === ui.replyToId && cleanName(c.author) === replyTo);
             const comment = { id: uid(), author: s.profile.name, text, t: Date.now(), likes: 0, mine: true, replyTo, replyToId: parent?.id || '' };
             (p.comments ||= []).push(comment);
             planLikes(s, comment, p);
             byId('sh-cmt').value = ''; ui.replyTo = ''; ui.replyToId = ''; ui.replyPostId = '';
             p.loadingComments = true; save(s); render();
-            const target = replyTo || (p.mine ? '' : p.author);
-            const list = await aiComments(s, p, `${s.profile.name} только что написал(а) комментарий${replyTo ? ` в ответ ${replyTo}` : ''}: «${text}». Сгенерируй 1–3 ответа в ветке. ${target ? `${target} обязательно отвечает ${s.profile.name} (replyTo: "${s.profile.name}"). ` : 'Ответь от лица других жителей. '}Может подключиться ещё кто-то из комментаторов или новый житель.`, 'этот комментарий');
+            const target = parent?.mine ? '' : replyTo || (p.mine ? '' : p.author);
+            const list = await aiComments(s, p, `${s.profile.name} только что написал(а) комментарий${replyTo ? ` в ответ ${replyTo}` : ''}: «${text}». Сгенерируй 1–3 ответа в ветке. ${target ? `${target} обязательно отвечает ${s.profile.name} (replyTo: "${s.profile.name}"). ` : 'Ответь от лица других жителей. '}Может подключиться ещё кто-то из комментаторов или новый житель.`, 'этот комментарий', comment.id);
             p.loadingComments = false;
             if (S() !== s) return;
             if (!s.feed.includes(p) || !p.comments?.includes(comment)) return;
